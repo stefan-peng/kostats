@@ -1,0 +1,14 @@
+data/
+.playwright-mcp/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+frontend/tsconfig.tsbuildinfo
+.DS_Store
+kostats-dashboard*.png
+kostats-final-functional.png

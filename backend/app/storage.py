@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from .config import data_dir
+from .errors import ImportError, UnsupportedSchemaError
+from .sqlite_stats import SnapshotMeta, build_dashboard, read_user_version
+
+
+class SnapshotStore:
+    def __init__(self, root: Path | None = None) -> None:
+        self.root = root or data_dir()
+        self.snapshots_dir = self.root / "snapshots"
+        self.manifest_path = self.root / "manifest.json"
+
+    def ensure(self) -> None:
+        self.snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+    def load_manifest(self) -> dict[str, Any]:
+        self.ensure()
+        if not self.manifest_path.exists():
+            return {"snapshots": []}
+        with self.manifest_path.open("r", encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        manifest.setdefault("snapshots", [])
+        return manifest
+
+    def save_manifest(self, manifest: dict[str, Any]) -> None:
+        self.ensure()
+        tmp_path = self.manifest_path.with_suffix(".json.tmp")
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        tmp_path.replace(self.manifest_path)
+
+    def list_snapshots(self) -> list[dict[str, Any]]:
+        manifest = self.load_manifest()
+        return sorted(
+            manifest["snapshots"],
+            key=lambda item: item["imported_at"],
+            reverse=True,
+        )
+
+    def latest(self) -> SnapshotMeta | None:
+        snapshots = self.list_snapshots()
+        if not snapshots:
+            return None
+        return SnapshotMeta(**snapshots[0])
+
+    def resolve(self, snapshot_id: str) -> SnapshotMeta | None:
+        if snapshot_id == "latest":
+            return self.latest()
+        for item in self.load_manifest()["snapshots"]:
+            if item["id"] == snapshot_id:
+                return SnapshotMeta(**item)
+        return None
+
+    def import_file(
+        self,
+        source: Path,
+        *,
+        source_kind: str,
+        source_path: str | None = None,
+    ) -> SnapshotMeta:
+        self.ensure()
+        if not source.exists():
+            raise ImportError(f"Database file does not exist: {source}")
+        if not source.is_file():
+            raise ImportError(f"Database path is not a file: {source}")
+
+        imported_at = datetime.now(timezone.utc).isoformat()
+        snapshot_id = imported_at.replace(":", "").replace("+00:00", "Z")
+        destination = self.snapshots_dir / f"{snapshot_id}-statistics.sqlite3"
+        try:
+            copy_sqlite_database(source, destination)
+        except sqlite3.DatabaseError as exc:
+            destination.unlink(missing_ok=True)
+            raise ImportError(f"Selected file is not a readable SQLite database: {source_path or source}") from exc
+
+        try:
+            user_version = read_user_version(destination)
+            meta = SnapshotMeta(
+                id=snapshot_id,
+                imported_at=imported_at,
+                source=source_kind,
+                source_path=source_path,
+                path=str(destination),
+                file_size=destination.stat().st_size,
+                user_version=user_version,
+                schema_version=str(user_version),
+            )
+            build_dashboard(destination, meta)
+        except UnsupportedSchemaError:
+            destination.unlink(missing_ok=True)
+            raise
+
+        manifest = self.load_manifest()
+        manifest["snapshots"].append(meta.__dict__)
+        self.save_manifest(manifest)
+        return meta
+
+
+def copy_sqlite_database(source: Path, destination: Path) -> None:
+    source_uri = f"{source.resolve().as_uri()}?mode=ro"
+    with sqlite3.connect(source_uri, uri=True) as source_conn:
+        with sqlite3.connect(destination) as destination_conn:
+            source_conn.backup(destination_conn)
