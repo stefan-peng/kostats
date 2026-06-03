@@ -15,9 +15,48 @@ const emptyDashboard = {
     pages: 0,
     current_streak: 0,
   },
-  charts: { daily: [], monthly: [], top_books: [] },
+  charts: {
+    daily: [],
+    monthly: [],
+    top_books: [],
+    calendar: {
+      start_date: null,
+      end_date: null,
+      max_minutes: 0,
+      total_days: 0,
+      days: [],
+    },
+  },
   recent_books: [],
 };
+
+function calendarFixture(days: Array<{ date: string; label: string; minutes: number; time_label: string; level: 1 | 2 | 3 | 4 }>) {
+  return {
+    start_date: days[0]?.date ?? null,
+    end_date: days.at(-1)?.date ?? null,
+    max_minutes: Math.max(0, ...days.map((day) => day.minutes)),
+    total_days: days.length,
+    days,
+  };
+}
+
+const fullCalendar = calendarFixture([
+  { date: "2026-04-20", label: "Apr 20, 2026", minutes: 15, time_label: "15m", level: 1 },
+  { date: "2026-04-21", label: "Apr 21, 2026", minutes: 20, time_label: "20m", level: 1 },
+  { date: "2026-04-22", label: "Apr 22, 2026", minutes: 25, time_label: "25m", level: 2 },
+  { date: "2026-04-23", label: "Apr 23, 2026", minutes: 30, time_label: "30m", level: 2 },
+  { date: "2026-04-24", label: "Apr 24, 2026", minutes: 35, time_label: "35m", level: 2 },
+  { date: "2026-04-25", label: "Apr 25, 2026", minutes: 40, time_label: "40m", level: 2 },
+  { date: "2026-04-26", label: "Apr 26, 2026", minutes: 45, time_label: "45m", level: 2 },
+  { date: "2026-04-27", label: "Apr 27, 2026", minutes: 50, time_label: "50m", level: 3 },
+  { date: "2026-04-28", label: "Apr 28, 2026", minutes: 55, time_label: "55m", level: 3 },
+  { date: "2026-04-29", label: "Apr 29, 2026", minutes: 60, time_label: "1h", level: 3 },
+  { date: "2026-04-30", label: "Apr 30, 2026", minutes: 65, time_label: "1h 05m", level: 3 },
+  { date: "2026-05-01", label: "May 1, 2026", minutes: 70, time_label: "1h 10m", level: 3 },
+  { date: "2026-05-02", label: "May 2, 2026", minutes: 75, time_label: "1h 15m", level: 4 },
+  { date: "2026-05-03", label: "May 3, 2026", minutes: 80, time_label: "1h 20m", level: 4 },
+  { date: "2026-05-04", label: "May 4, 2026", minutes: 90, time_label: "1h 30m", level: 4 },
+]);
 
 const populatedDashboard = {
   has_data: true,
@@ -34,7 +73,7 @@ const populatedDashboard = {
   summary: {
     total_time_seconds: 5400,
     total_time_label: "1h 30m",
-    reading_days: 2,
+    reading_days: 15,
     books: 1,
     pages: 8,
     current_streak: 2,
@@ -43,6 +82,7 @@ const populatedDashboard = {
     daily: [{ date: "2026-05-30", label: "May 30", minutes: 90 }],
     monthly: [{ month: "2026-05", label: "May 26", hours: 1.5 }],
     top_books: [{ id: "1", title: "Piranesi", hours: 1.5 }],
+    calendar: fullCalendar,
   },
   recent_books: [
     {
@@ -75,11 +115,15 @@ const olderDashboard = {
     ...populatedDashboard.summary,
     total_time_seconds: 1800,
     total_time_label: "30m",
+    reading_days: 1,
   },
   charts: {
     daily: [{ date: "2026-05-01", label: "May 1", minutes: 30 }],
     monthly: [{ month: "2026-05", label: "May 26", hours: 0.5 }],
     top_books: [{ id: "2", title: "Older Book", hours: 0.5 }],
+    calendar: calendarFixture([
+      { date: "2026-05-01", label: "May 1, 2026", minutes: 30, time_label: "30m", level: 4 },
+    ]),
   },
   recent_books: [
     {
@@ -277,7 +321,9 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Calendar/i }));
     expect(screen.getByRole("heading", { name: "Calendar" })).toBeInTheDocument();
-    expect(screen.getByText("90 min")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Monday, April 20, 2026: 15m read, intensity 1 of 4/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Monday, May 4, 2026: 1h 30m read, intensity 4 of 4/)).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Calendar summary")).getByText("15")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /Settings/i }));
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();

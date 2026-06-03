@@ -110,7 +110,18 @@ def get_dashboard(snapshot_id: str = "latest") -> dict:
                 "pages": 0,
                 "current_streak": 0,
             },
-            "charts": {"daily": [], "monthly": [], "top_books": []},
+            "charts": {
+                "daily": [],
+                "monthly": [],
+                "top_books": [],
+                "calendar": {
+                    "start_date": None,
+                    "end_date": None,
+                    "max_minutes": 0,
+                    "total_days": 0,
+                    "days": [],
+                },
+            },
             "recent_books": [],
         }
     try:

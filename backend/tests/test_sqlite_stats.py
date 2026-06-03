@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -95,6 +95,37 @@ def create_period_db(path: Path) -> None:
     conn.close()
 
 
+def create_long_history_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE book (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            authors TEXT,
+            last_open INTEGER,
+            pages INTEGER
+        );
+        CREATE TABLE page_stat_data (
+            id_book INTEGER,
+            page INTEGER,
+            start_time INTEGER,
+            duration INTEGER,
+            total_pages INTEGER
+        );
+        INSERT INTO book VALUES (1, 'The Dispossessed', 'Ursula K. Le Guin', 1769904000, 320);
+        """
+    )
+    start = datetime(2026, 1, 1, 12)
+    rows = [
+        (1, day + 1, int((start + timedelta(days=day)).timestamp()), (day + 1) * 60, 320)
+        for day in range(35)
+    ]
+    conn.executemany("INSERT INTO page_stat_data VALUES (?, ?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+
+
 def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "statistics.sqlite3"
     create_current_db(db_path)
@@ -110,6 +141,9 @@ def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     assert dashboard["summary"]["current_streak"] == 3
     assert dashboard["charts"]["top_books"][0]["title"] == "The Left Hand of Darkness"
     assert len(dashboard["charts"]["daily"]) == 3
+    assert dashboard["charts"]["calendar"]["total_days"] == 3
+    assert dashboard["charts"]["calendar"]["days"][0]["date"] == "2026-01-31"
+    assert dashboard["charts"]["calendar"]["days"][-1]["level"] == 1
     assert dashboard["recent_books"][0]["title"] == "The Left Hand of Darkness"
 
 
@@ -133,6 +167,30 @@ def test_build_dashboard_from_koreader_period_column(tmp_path: Path) -> None:
     assert dashboard["summary"]["total_time_seconds"] == 1800
     assert dashboard["summary"]["total_time_label"] == "30m"
     assert dashboard["recent_books"][0]["title"] == "Kindred"
+
+
+def test_calendar_keeps_all_reading_days_with_intensity(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_long_history_db(db_path)
+
+    dashboard = build_dashboard(db_path)
+
+    calendar = dashboard["charts"]["calendar"]
+    assert len(dashboard["charts"]["daily"]) == 30
+    assert len(calendar["days"]) == 35
+    assert calendar["start_date"] == "2026-01-01"
+    assert calendar["end_date"] == "2026-02-04"
+    assert calendar["max_minutes"] == 35
+    assert calendar["days"][0] == {
+        "date": "2026-01-01",
+        "label": "Jan 1, 2026",
+        "minutes": 1,
+        "time_label": "1m",
+        "level": 1,
+    }
+    assert calendar["days"][-1]["date"] == "2026-02-04"
+    assert calendar["days"][-1]["minutes"] == 35
+    assert calendar["days"][-1]["level"] == 4
 
 
 def test_unsupported_schema_reports_clear_error(tmp_path: Path) -> None:

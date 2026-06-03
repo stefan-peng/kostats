@@ -49,6 +49,19 @@ export type Dashboard = {
     daily: Array<{ date: string; label: string; minutes: number }>;
     monthly: Array<{ month: string; label: string; hours: number }>;
     top_books: Array<{ id: string; title: string; hours: number }>;
+    calendar: {
+      start_date: string | null;
+      end_date: string | null;
+      max_minutes: number;
+      total_days: number;
+      days: Array<{
+        date: string;
+        label: string;
+        minutes: number;
+        time_label: string;
+        level: 0 | 1 | 2 | 3 | 4;
+      }>;
+    };
   };
   recent_books: Array<{
     id: string;

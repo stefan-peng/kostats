@@ -93,6 +93,19 @@ def seconds_to_hours(seconds: float) -> float:
     return round(seconds / 3600, 2)
 
 
+def calendar_level(seconds: float, max_seconds: float) -> int:
+    if seconds <= 0 or max_seconds <= 0:
+        return 0
+    ratio = seconds / max_seconds
+    if ratio <= 0.25:
+        return 1
+    if ratio <= 0.5:
+        return 2
+    if ratio <= 0.75:
+        return 3
+    return 4
+
+
 def format_duration(seconds: float) -> str:
     total_minutes = int(round(seconds / 60))
     hours, minutes = divmod(total_minutes, 60)
@@ -287,6 +300,7 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
     sorted_months = sorted(month_seconds)
     latest_days = sorted_days[-30:]
     latest_months = sorted_months[-12:]
+    max_day_seconds = max(day_seconds.values(), default=0.0)
 
     return {
         "has_data": True,
@@ -324,6 +338,22 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
                 }
                 for item in top_books
             ],
+            "calendar": {
+                "start_date": sorted_days[0] if sorted_days else None,
+                "end_date": sorted_days[-1] if sorted_days else None,
+                "max_minutes": seconds_to_minutes(max_day_seconds),
+                "total_days": len(sorted_days),
+                "days": [
+                    {
+                        "date": key,
+                        "label": datetime.strptime(key, "%Y-%m-%d").strftime("%b %-d, %Y"),
+                        "minutes": seconds_to_minutes(day_seconds[key]),
+                        "time_label": format_duration(day_seconds[key]),
+                        "level": calendar_level(day_seconds[key], max_day_seconds),
+                    }
+                    for key in sorted_days
+                ],
+            },
         },
         "recent_books": recent_books[:20],
     }
