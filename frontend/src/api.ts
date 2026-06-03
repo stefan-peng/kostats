@@ -1,4 +1,4 @@
-import type { Dashboard, DeviceStatus, Snapshot } from "./types";
+import type { AutoImportResult, Dashboard, DeviceStatus, Snapshot } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -23,6 +23,12 @@ export function getSnapshots(): Promise<{ snapshots: Snapshot[] }> {
 
 export function importFromKobo(): Promise<{ snapshot: Snapshot; dashboard: Dashboard }> {
   return request<{ snapshot: Snapshot; dashboard: Dashboard }>("/api/import/kobo", {
+    method: "POST",
+  });
+}
+
+export function autoImportFromKobo(): Promise<AutoImportResult> {
+  return request<AutoImportResult>("/api/import/kobo/auto", {
     method: "POST",
   });
 }

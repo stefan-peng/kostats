@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  autoImportFromKobo,
   getDashboard,
   getDeviceStatus,
   getSnapshots,
@@ -57,6 +58,14 @@ function downloadText(filename: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+function formatSnapshotSource(snapshot: Snapshot | null) {
+  if (!snapshot) return "Connect Kobo or upload DB";
+  const path = snapshot.source_path ?? snapshot.source;
+  if (snapshot.source === "kobo-auto") return `Auto Kobo import: ${path}`;
+  if (snapshot.source === "kobo") return `Kobo import: ${path}`;
+  return path;
+}
+
 function Icon({ name }: { name: string }) {
   return (
     <span className="icon" aria-hidden="true">
@@ -70,12 +79,14 @@ function DeviceBanner({
   latestSnapshot,
   onImport,
   onUploadClick,
+  lastAutoImport,
   busy,
 }: {
   status: DeviceStatus | null;
   latestSnapshot: Snapshot | null;
   onImport: () => void;
   onUploadClick: () => void;
+  lastAutoImport: Snapshot | null;
   busy: boolean;
 }) {
   const mounted = status?.mounted ?? false;
@@ -109,7 +120,13 @@ function DeviceBanner({
       </div>
       <div className="device-meta">
         <span>Status</span>
-        <strong>{latestSnapshot ? "Latest local snapshot available" : "Waiting for first import"}</strong>
+        <strong>
+          {lastAutoImport
+            ? `Auto-imported ${formatDateTime(lastAutoImport.imported_at)}`
+            : latestSnapshot
+              ? "Latest local snapshot available"
+              : "Waiting for first import"}
+        </strong>
       </div>
       <div className="actions">
         <button className="primary" disabled={busy || !found} onClick={onImport}>
@@ -138,7 +155,7 @@ function SnapshotPanel({ snapshot }: { snapshot: Snapshot | null }) {
         </div>
         <div>
           <dt>Source</dt>
-          <dd>{snapshot?.source_path ?? "Connect Kobo or upload DB"}</dd>
+          <dd>{formatSnapshotSource(snapshot)}</dd>
         </div>
         <div>
           <dt>Size</dt>
@@ -386,7 +403,7 @@ function SnapshotsView({
                     <span className="cell-truncate">{formatDateTime(snapshot.imported_at)}</span>
                   </td>
                   <td title={snapshot.source_path ?? snapshot.source}>
-                    <code className="cell-truncate table-code">{snapshot.source_path ?? snapshot.source}</code>
+                    <code className="cell-truncate table-code">{formatSnapshotSource(snapshot)}</code>
                   </td>
                   <td>{formatBytes(snapshot.file_size)}</td>
                   <td>{snapshot.schema_version}</td>
@@ -531,15 +548,22 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [activeView, setActiveView] = useState<View>("dashboard");
   const [error, setError] = useState<string | null>(null);
+  const [lastAutoImport, setLastAutoImport] = useState<Snapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const selectedSnapshotId = useRef<string | null>(null);
 
   async function refresh() {
-    const [deviceStatus, dashboardData, snapshotData] = await Promise.all([
-      getDeviceStatus(),
-      getDashboard(),
-      getSnapshots(),
-    ]);
+    let deviceStatus = await getDeviceStatus();
+    if (deviceStatus.mounted && deviceStatus.database_found && !deviceStatus.permission_error) {
+      const autoResult = await autoImportFromKobo();
+      deviceStatus = autoResult.device;
+      if (autoResult.imported) {
+        setLastAutoImport(autoResult.snapshot);
+      }
+    }
+    const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
+    const [dashboardData, snapshotData] = await Promise.all([getDashboard(dashboardSnapshotId), getSnapshots()]);
     setDevice(deviceStatus);
     setDashboard(dashboardData);
     setSnapshots(snapshotData.snapshots);
@@ -549,7 +573,9 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      setDashboard(await getDashboard(snapshotId));
+      const selectedDashboard = await getDashboard(snapshotId);
+      selectedSnapshotId.current = snapshotId;
+      setDashboard(selectedDashboard);
       setActiveView("dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load snapshot");
@@ -561,7 +587,7 @@ export default function App() {
   useEffect(() => {
     refresh().catch((err: Error) => setError(err.message));
     const id = window.setInterval(() => {
-      getDeviceStatus().then(setDevice).catch(() => undefined);
+      refresh().catch(() => undefined);
     }, 15000);
     return () => window.clearInterval(id);
   }, []);
@@ -571,6 +597,8 @@ export default function App() {
     setError(null);
     try {
       const result = await importFromKobo();
+      selectedSnapshotId.current = null;
+      setLastAutoImport(null);
       setDashboard(result.dashboard);
       setActiveView("dashboard");
       await refresh();
@@ -587,6 +615,8 @@ export default function App() {
     setError(null);
     try {
       const result = await uploadDatabase(file);
+      selectedSnapshotId.current = null;
+      setLastAutoImport(null);
       setDashboard(result.dashboard);
       setActiveView("dashboard");
       await refresh();
@@ -645,6 +675,7 @@ export default function App() {
           latestSnapshot={latestSnapshot}
           onImport={handleImport}
           onUploadClick={() => fileInput.current?.click()}
+          lastAutoImport={lastAutoImport}
           busy={busy}
         />
         <input
@@ -664,6 +695,12 @@ export default function App() {
         {noKoboWithData ? (
           <div className="alert info">
             Kobo is not mounted. Showing stats from the {isViewingLatest ? "latest" : "selected"} local snapshot.
+          </div>
+        ) : null}
+        {lastAutoImport ? (
+          <div className="alert success">
+            Auto-imported Kobo database at {formatDateTime(lastAutoImport.imported_at)}.{" "}
+            {isViewingLatest ? "Showing the newest local snapshot." : "Selected snapshot remains open."}
           </div>
         ) : null}
 

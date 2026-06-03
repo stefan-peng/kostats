@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +61,16 @@ class SnapshotStore:
                 return SnapshotMeta(**item)
         return None
 
+    def snapshot_content_hash(self, snapshot: SnapshotMeta | None) -> str | None:
+        if snapshot is None:
+            return None
+        if snapshot.content_hash:
+            return snapshot.content_hash
+        path = Path(snapshot.path)
+        if not path.exists():
+            return None
+        return hash_file(path)
+
     def import_file(
         self,
         source: Path,
@@ -72,15 +84,66 @@ class SnapshotStore:
         if not source.is_file():
             raise ImportError(f"Database path is not a file: {source}")
 
-        imported_at = datetime.now(timezone.utc).isoformat()
-        snapshot_id = imported_at.replace(":", "").replace("+00:00", "Z")
-        destination = self.snapshots_dir / f"{snapshot_id}-statistics.sqlite3"
+        imported_at, snapshot_id, destination = self.next_snapshot_destination()
         try:
             copy_sqlite_database(source, destination)
         except sqlite3.DatabaseError as exc:
             destination.unlink(missing_ok=True)
             raise ImportError(f"Selected file is not a readable SQLite database: {source_path or source}") from exc
 
+        return self.record_snapshot(
+            destination,
+            imported_at=imported_at,
+            snapshot_id=snapshot_id,
+            source_kind=source_kind,
+            source_path=source_path,
+        )
+
+    def import_snapshot_copy(
+        self,
+        source: Path,
+        *,
+        source_kind: str,
+        source_path: str | None = None,
+        content_hash: str | None = None,
+    ) -> SnapshotMeta:
+        self.ensure()
+        if not source.exists():
+            raise ImportError(f"Database file does not exist: {source}")
+        if not source.is_file():
+            raise ImportError(f"Database path is not a file: {source}")
+
+        imported_at, snapshot_id, destination = self.next_snapshot_destination()
+        try:
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            destination.unlink(missing_ok=True)
+            raise ImportError(f"Could not copy database snapshot: {source_path or source}") from exc
+
+        return self.record_snapshot(
+            destination,
+            imported_at=imported_at,
+            snapshot_id=snapshot_id,
+            source_kind=source_kind,
+            source_path=source_path,
+            content_hash=content_hash,
+        )
+
+    def next_snapshot_destination(self) -> tuple[str, str, Path]:
+        imported_at = datetime.now(timezone.utc).isoformat()
+        snapshot_id = imported_at.replace(":", "").replace("+00:00", "Z")
+        return imported_at, snapshot_id, self.snapshots_dir / f"{snapshot_id}-statistics.sqlite3"
+
+    def record_snapshot(
+        self,
+        destination: Path,
+        *,
+        imported_at: str,
+        snapshot_id: str,
+        source_kind: str,
+        source_path: str | None,
+        content_hash: str | None = None,
+    ) -> SnapshotMeta:
         try:
             user_version = read_user_version(destination)
             meta = SnapshotMeta(
@@ -92,6 +155,7 @@ class SnapshotStore:
                 file_size=destination.stat().st_size,
                 user_version=user_version,
                 schema_version=str(user_version),
+                content_hash=content_hash or hash_file(destination),
             )
             build_dashboard(destination, meta)
         except UnsupportedSchemaError:
@@ -109,3 +173,11 @@ def copy_sqlite_database(source: Path, destination: Path) -> None:
     with sqlite3.connect(source_uri, uri=True) as source_conn:
         with sqlite3.connect(destination) as destination_conn:
             source_conn.backup(destination_conn)
+
+
+def hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

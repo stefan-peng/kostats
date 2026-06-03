@@ -23,6 +23,15 @@ export type Snapshot = {
   file_size: number;
   user_version: number;
   schema_version: string;
+  content_hash?: string | null;
+};
+
+export type AutoImportResult = {
+  imported: boolean;
+  reason: "changed" | "unchanged" | "not_mounted" | "database_missing" | "access_blocked";
+  snapshot: Snapshot | null;
+  device: DeviceStatus;
+  dashboard?: Dashboard;
 };
 
 export type Dashboard = {
@@ -54,4 +63,3 @@ export type Dashboard = {
     progress: number | null;
   }>;
 };
-

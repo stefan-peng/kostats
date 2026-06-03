@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from .device import device_status, import_from_kobo
+from .device import auto_import_from_kobo, device_status, import_from_kobo
 from .errors import ImportError, UnsupportedSchemaError
 from .sqlite_stats import SnapshotMeta, build_dashboard
 from .storage import SnapshotStore
@@ -38,6 +38,20 @@ def post_import_kobo() -> dict:
         result = import_from_kobo(store())
         snapshot = SnapshotMeta(**result["snapshot"])
         result["dashboard"] = build_dashboard(Path(snapshot.path), snapshot)
+        return result
+    except ImportError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except UnsupportedSchemaError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/import/kobo/auto")
+def post_auto_import_kobo() -> dict:
+    try:
+        result = auto_import_from_kobo(store())
+        if result["imported"] and result["snapshot"]:
+            snapshot = SnapshotMeta(**result["snapshot"])
+            result["dashboard"] = build_dashboard(Path(snapshot.path), snapshot)
         return result
     except ImportError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

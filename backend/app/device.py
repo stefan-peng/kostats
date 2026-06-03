@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import sqlite3
+import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .config import kobo_volume
 from .errors import ImportError
-from .storage import SnapshotStore
+from .storage import SnapshotStore, copy_sqlite_database, hash_file
 
 
 KOBO_DB_CANDIDATES = [
@@ -15,6 +18,7 @@ KOBO_DB_CANDIDATES = [
     ".adds/koreader/statistics.sqlite3",
     "koreader/settings/statistics.sqlite3",
 ]
+AUTO_IMPORT_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -74,3 +78,51 @@ def import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> dict[s
     )
     return {"snapshot": meta.__dict__, "device": status}
 
+
+def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> dict[str, Any]:
+    status = device_status(volume)
+    latest = store.latest()
+    latest_payload = latest.__dict__ if latest else None
+    result = {
+        "imported": False,
+        "reason": "not_mounted",
+        "snapshot": latest_payload,
+        "device": status,
+    }
+
+    if not status["mounted"]:
+        return result
+    if not status["selected_path"]:
+        result["reason"] = "access_blocked" if status["permission_error"] else "database_missing"
+        return result
+
+    source = Path(status["selected_path"])
+    with tempfile.TemporaryDirectory(prefix="kostats-auto-import-") as tmp_dir:
+        prepared = Path(tmp_dir) / "statistics.sqlite3"
+        try:
+            copy_sqlite_database(source, prepared)
+        except sqlite3.DatabaseError as exc:
+            raise ImportError(f"Selected file is not a readable SQLite database: {source}") from exc
+
+        prepared_hash = hash_file(prepared)
+        with AUTO_IMPORT_LOCK:
+            latest = store.latest()
+            latest_hash = store.snapshot_content_hash(latest)
+            if latest_hash == prepared_hash:
+                result["reason"] = "unchanged"
+                result["snapshot"] = latest.__dict__ if latest else None
+                return result
+
+            meta = store.import_snapshot_copy(
+                prepared,
+                source_kind="kobo-auto",
+                source_path=status["selected_path"],
+                content_hash=prepared_hash,
+            )
+
+    return {
+        "imported": True,
+        "reason": "changed",
+        "snapshot": meta.__dict__,
+        "device": status,
+    }

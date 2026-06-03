@@ -77,3 +77,24 @@ def test_upload_rejects_unsupported_sqlite_without_snapshot(monkeypatch, tmp_pat
     assert response.status_code == 422
     assert client.get("/api/snapshots").json() == {"snapshots": []}
 
+
+def test_auto_kobo_import_endpoint_skips_unchanged_database(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    volume = tmp_path / "KOBOeReader"
+    source = volume / ".adds/koreader/settings/statistics.sqlite3"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    create_api_fixture(source)
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    monkeypatch.setenv("KOSTATS_KOBO_VOLUME", str(volume))
+    client = TestClient(app)
+
+    first = client.post("/api/import/kobo/auto")
+    second = client.post("/api/import/kobo/auto")
+
+    assert first.status_code == 200
+    assert first.json()["imported"] is True
+    assert first.json()["dashboard"]["recent_books"][0]["title"] == "Kindred"
+    assert second.status_code == 200
+    assert second.json()["imported"] is False
+    assert second.json()["reason"] == "unchanged"
+    assert len(client.get("/api/snapshots").json()["snapshots"]) == 1

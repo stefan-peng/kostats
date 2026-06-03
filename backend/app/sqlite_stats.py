@@ -21,6 +21,7 @@ class SnapshotMeta:
     file_size: int
     user_version: int
     schema_version: str
+    content_hash: str | None = None
 
 
 def quote_identifier(identifier: str) -> str:

@@ -15,7 +15,7 @@ npm run dev --prefix frontend
 
 Open the Vite URL shown by npm, usually `http://127.0.0.1:5173`.
 
-The app works when the Kobo is not connected. On startup it checks whether `/Volumes/KOBOeReader` is mounted and continues showing the latest local snapshot if no device is present.
+The app works when the Kobo is not connected. On startup and while open, it checks whether `/Volumes/KOBOeReader` is mounted, imports a new local snapshot only when the KOReader database has changed, and continues showing the latest local snapshot if no device is present.
 
 ## Tests
 
@@ -27,4 +27,3 @@ npm test --prefix frontend
 ## Local data
 
 Imported database snapshots are stored under `data/snapshots/`, with metadata in `data/manifest.json`. The entire `data/` directory is ignored by Git.
-

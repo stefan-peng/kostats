@@ -259,6 +259,12 @@ main {
   background: #f0f8f2;
 }
 
+.alert.success {
+  border-color: #b7dbc2;
+  color: #154f2a;
+  background: #edf9f0;
+}
+
 .alert.error {
   border-color: #efcdc7;
   color: var(--error);

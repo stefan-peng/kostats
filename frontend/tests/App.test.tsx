@@ -94,6 +94,20 @@ const olderDashboard = {
   ],
 };
 
+const autoSnapshot = {
+  ...populatedDashboard.snapshot,
+  id: "20260601T120000Z",
+  imported_at: "2026-06-01T12:00:00Z",
+  source: "kobo-auto",
+  source_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+  path: "/tmp/auto-statistics.sqlite3",
+};
+
+const autoDashboard = {
+  ...populatedDashboard,
+  snapshot: autoSnapshot,
+};
+
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -165,19 +179,28 @@ describe("App", () => {
   });
 
   it("shows manual fallback when Kobo import fails", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
     mockFetch((url, init) => {
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return {
+          imported: false,
+          reason: "unchanged",
+          snapshot: null,
+          device: mountedStatus,
+        };
+      }
       if (url.startsWith("/api/import/kobo") && init?.method === "POST") {
         return new Error("Kobo is mounted, but macOS denied access to the KOReader database.");
       }
       if (url.startsWith("/api/device/status")) {
-        return {
-          mount_path: "/Volumes/KOBOeReader",
-          mounted: true,
-          database_found: true,
-          selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
-          permission_error: null,
-          candidates: [],
-        };
+        return mountedStatus;
       }
       if (url.startsWith("/api/snapshots")) return { snapshots: [] };
       return emptyDashboard;
@@ -190,6 +213,37 @@ describe("App", () => {
       expect(screen.getByText(/macOS denied access/)).toBeInTheDocument();
     });
     expect(screen.getAllByRole("button", { name: /Upload DB/i }).length).toBeGreaterThan(0);
+  });
+
+  it("announces an automatic Kobo import during startup sync", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return {
+          imported: true,
+          reason: "changed",
+          snapshot: autoSnapshot,
+          device: mountedStatus,
+          dashboard: autoDashboard,
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [autoSnapshot] };
+      return autoDashboard;
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText(/Auto-imported Kobo database at/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Auto Kobo import:/).length).toBeGreaterThan(0);
+    expect(within(screen.getByLabelText("Device import status")).getByText(/Auto-imported/)).toBeInTheDocument();
   });
 
   it("makes sidebar sections navigable", async () => {
@@ -256,6 +310,62 @@ describe("App", () => {
     expect(screen.getByText("Kobo is not mounted. Showing stats from the selected local snapshot.")).toBeInTheDocument();
     expect(screen.getByText(olderSnapshot.id)).toBeInTheDocument();
     expect(within(screen.getByLabelText("Device import status")).getByText(/May 31, 2026/)).toBeInTheDocument();
+  });
+
+  it("preserves a selected snapshot when refresh auto-imports a newer database", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    let autoImportChanged = false;
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return autoImportChanged
+          ? {
+              imported: true,
+              reason: "changed",
+              snapshot: autoSnapshot,
+              device: mountedStatus,
+              dashboard: autoDashboard,
+            }
+          : {
+              imported: false,
+              reason: "unchanged",
+              snapshot: populatedDashboard.snapshot,
+              device: mountedStatus,
+            };
+      }
+      if (url.startsWith("/api/snapshots")) {
+        return {
+          snapshots: autoImportChanged
+            ? [autoSnapshot, populatedDashboard.snapshot, olderSnapshot]
+            : [populatedDashboard.snapshot, olderSnapshot],
+        };
+      }
+      if (url.includes(`snapshot_id=${olderSnapshot.id}`)) return olderDashboard;
+      return populatedDashboard;
+    });
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Snapshots/i }));
+    await userEvent.click(screen.getAllByRole("button", { name: "View" })[0]);
+    expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
+
+    autoImportChanged = true;
+    await userEvent.click(screen.getByRole("button", { name: /Settings/i }));
+    await userEvent.click(screen.getByRole("button", { name: /Refresh now/i }));
+
+    await userEvent.click(screen.getByRole("button", { name: /Dashboard/i }));
+    expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Selected snapshot remains open/)).toBeInTheDocument();
+    expect(screen.getByText(olderSnapshot.id)).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Device import status")).getAllByText(/Jun 1, 2026/).length).toBeGreaterThan(0);
   });
 
   it("exports selected dashboard data", async () => {
