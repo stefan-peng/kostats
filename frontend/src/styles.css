@@ -188,20 +188,22 @@ nav button.active {
   color: currentColor;
 }
 
+nav .icon {
+  width: 22px;
+  font-size: 17px;
+  line-height: 1;
+}
+
 .storage-card {
   margin-top: auto;
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 16px;
-  display: grid;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 13px;
+  padding: 12px 14px;
 }
 
 .storage-card strong {
   color: var(--ink);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 main {
@@ -212,7 +214,6 @@ main {
 }
 
 .device-banner,
-.snapshot-panel,
 .metric-card,
 .chart-panel,
 .recent-panel,
@@ -230,7 +231,7 @@ main {
 .device-banner {
   min-height: 78px;
   display: grid;
-  grid-template-columns: minmax(300px, 1.1fr) minmax(150px, 0.45fr) minmax(210px, 0.55fr) auto;
+  grid-template-columns: minmax(300px, 1fr) auto auto auto;
   align-items: center;
   gap: 22px;
   padding: 14px 20px;
@@ -312,12 +313,6 @@ main {
   color: var(--muted);
 }
 
-.path {
-  margin-left: 10px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-}
-
 .actions {
   display: flex;
   gap: 10px;
@@ -346,33 +341,6 @@ main {
   background: var(--alert-error-bg);
 }
 
-.snapshot-panel {
-  display: grid;
-  grid-template-columns: 70px 1fr;
-  align-items: center;
-  padding: 18px;
-}
-
-.snapshot-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-size: 24px;
-}
-
-.snapshot-panel dl {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 24px;
-  margin: 0;
-  min-width: 0;
-}
-
-.snapshot-panel dl > div,
 .settings-panel dl > div {
   min-width: 0;
 }
@@ -413,7 +381,7 @@ dd {
 
 .metric-card {
   padding: 20px;
-  min-height: 118px;
+  min-height: 92px;
 }
 
 .metric-card p {
@@ -427,14 +395,6 @@ dd {
   margin-top: 8px;
   font-size: 28px;
   line-height: 1.1;
-}
-
-.metric-card span {
-  display: block;
-  margin-top: 14px;
-  color: var(--accent-strong);
-  font-size: 12px;
-  font-weight: 650;
 }
 
 .charts-grid {
@@ -457,12 +417,6 @@ dd {
   margin-bottom: 14px;
   gap: 12px;
   min-width: 0;
-}
-
-.chart-panel header span {
-  flex-shrink: 0;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .bar-chart {
@@ -774,7 +728,7 @@ td {
 
 .calendar-summary {
   display: grid;
-  grid-template-columns: auto auto auto auto;
+  grid-template-columns: auto auto;
   gap: 6px 10px;
   align-items: baseline;
   color: var(--muted);
@@ -894,10 +848,11 @@ td {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
-  margin: 0 0 24px;
+  margin: 0;
 }
 
 .settings-panel h4 {
+  margin-top: 24px;
   margin-bottom: 12px;
   font-size: 15px;
 }
@@ -977,8 +932,6 @@ td {
   }
 
   .device-banner,
-  .snapshot-panel,
-  .snapshot-panel dl,
   .settings-panel dl,
   .metrics-grid,
   .charts-grid {
@@ -1005,24 +958,12 @@ td {
   }
 
   .device-banner,
-  .snapshot-panel,
   .chart-panel,
   .recent-panel header,
   .calendar-panel,
   .settings-panel,
   .empty-state {
     padding: 14px;
-  }
-
-  .snapshot-panel {
-    grid-template-columns: 42px minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .snapshot-icon {
-    width: 34px;
-    height: 34px;
-    font-size: 18px;
   }
 
   .metrics-grid {

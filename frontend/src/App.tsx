@@ -39,6 +39,7 @@ const emptyDashboard: Dashboard = {
 };
 
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const mainLayoutStyle: CSSProperties = { alignContent: "start" };
 
 type CalendarDay = Dashboard["charts"]["calendar"]["days"][number];
 
@@ -166,17 +167,17 @@ function Icon({ name }: { name: string }) {
 
 function DeviceBanner({
   status,
+  activeSnapshot,
   latestSnapshot,
   onImport,
   onUploadClick,
-  lastAutoImport,
   busy,
 }: {
   status: DeviceStatus | null;
+  activeSnapshot: Snapshot | null;
   latestSnapshot: Snapshot | null;
   onImport: () => void;
   onUploadClick: () => void;
-  lastAutoImport: Snapshot | null;
   busy: boolean;
 }) {
   const mounted = status?.mounted ?? false;
@@ -198,26 +199,15 @@ function DeviceBanner({
         <div className="device-icon">▯</div>
         <div>
           <h2>Kobo / KOReader</h2>
-          <p>
-            <span className={stateClass}>{stateLabel}</span>
-            <span className="path">{status?.mount_path ?? "/Volumes/KOBOeReader"}</span>
-          </p>
+          <p className={stateClass}>{stateLabel}</p>
         </div>
       </div>
-      <div className="device-meta">
-        <span>Latest import</span>
-        <strong>{latestSnapshot ? formatDateTime(latestSnapshot.imported_at) : "No snapshots"}</strong>
-      </div>
-      <div className="device-meta">
-        <span>Status</span>
-        <strong>
-          {lastAutoImport
-            ? `Auto-imported ${formatDateTime(lastAutoImport.imported_at)}`
-            : latestSnapshot
-              ? "Latest local snapshot available"
-              : "Waiting for first import"}
-        </strong>
-      </div>
+      {activeSnapshot ? (
+        <SnapshotMeta label={activeSnapshot.id === latestSnapshot?.id ? "Snapshot" : "Viewing"} snapshot={activeSnapshot} />
+      ) : null}
+      {latestSnapshot && activeSnapshot?.id !== latestSnapshot.id ? (
+        <SnapshotMeta label="Latest" snapshot={latestSnapshot} />
+      ) : null}
       <div className="actions">
         <button className="primary" disabled={busy || !found} onClick={onImport}>
           <Icon name="↓" /> {busy ? "Importing..." : "Import from Kobo"}
@@ -230,54 +220,30 @@ function DeviceBanner({
   );
 }
 
-function SnapshotPanel({ snapshot }: { snapshot: Snapshot | null }) {
+function SnapshotMeta({ label, snapshot }: { label: string; snapshot: Snapshot | null }) {
   return (
-    <section className="snapshot-panel">
-      <div className="snapshot-icon">◉</div>
-      <dl>
-        <div>
-          <dt>Snapshot</dt>
-          <dd>{snapshot ? formatDateTime(snapshot.imported_at) : "None imported"}</dd>
-        </div>
-        <div>
-          <dt>Snapshot ID</dt>
-          <dd>{snapshot?.id ?? "No local database yet"}</dd>
-        </div>
-        <div>
-          <dt>Source</dt>
-          <dd>{formatSnapshotSource(snapshot)}</dd>
-        </div>
-        <div>
-          <dt>Size</dt>
-          <dd>{snapshot ? formatBytes(snapshot.file_size) : "0 B"}</dd>
-        </div>
-        <div>
-          <dt>Schema version</dt>
-          <dd>{snapshot?.schema_version ?? "Unknown"}</dd>
-        </div>
-      </dl>
-    </section>
+    <div className="device-meta">
+      <span>{label}</span>
+      <strong>{snapshot ? formatDateTime(snapshot.imported_at) : "None"}</strong>
+    </div>
   );
 }
 
-function MetricCard({ label, value, note }: { label: string; value: string | number; note: string }) {
+function MetricCard({ label, value }: { label: string; value: string | number }) {
   return (
     <article className="metric-card">
       <p>{label}</p>
       <strong>{value}</strong>
-      <span>{note}</span>
     </article>
   );
 }
 
 function VerticalBars({
   title,
-  subtitle,
   data,
   valueKey,
 }: {
   title: string;
-  subtitle: string;
   data: Array<Record<string, string | number>>;
   valueKey: string;
 }) {
@@ -286,7 +252,6 @@ function VerticalBars({
     <section className="chart-panel">
       <header>
         <h3>{title}</h3>
-        <span>{subtitle}</span>
       </header>
       {data.length === 0 ? (
         <div className="empty-chart">No reading data yet</div>
@@ -314,7 +279,6 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
     <section className="chart-panel top-books-panel">
       <header>
         <h3>Top books</h3>
-        <span>By time read</span>
       </header>
       {data.length === 0 ? (
         <div className="empty-chart">No books yet</div>
@@ -365,7 +329,7 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
             {books.length === 0 ? (
               <tr>
                 <td colSpan={6} className="empty-row">
-                  Import a KOReader statistics database to populate recent books.
+                  No books yet.
                 </td>
               </tr>
             ) : (
@@ -410,29 +374,26 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
     <>
       {!dashboard.has_data ? (
         <section className="empty-state">
-          <h2>No local KOReader database yet</h2>
-          <p>Connect your Kobo and import from KOReader, or upload a copied statistics.sqlite3 file.</p>
+          <h2>No database yet</h2>
         </section>
       ) : null}
 
       <section className="metrics-grid">
-        <MetricCard label="Total time" value={dashboard.summary.total_time_label} note="Across imported stats" />
-        <MetricCard label="Reading days" value={dashboard.summary.reading_days} note="Days with activity" />
-        <MetricCard label="Books" value={dashboard.summary.books} note="Books with reading time" />
-        <MetricCard label="Pages" value={dashboard.summary.pages.toLocaleString()} note="Distinct pages seen" />
-        <MetricCard label="Current streak" value={streakLabel} note="Through latest activity" />
+        <MetricCard label="Total time" value={dashboard.summary.total_time_label} />
+        <MetricCard label="Reading days" value={dashboard.summary.reading_days} />
+        <MetricCard label="Books" value={dashboard.summary.books} />
+        <MetricCard label="Pages" value={dashboard.summary.pages.toLocaleString()} />
+        <MetricCard label="Current streak" value={streakLabel} />
       </section>
 
       <section className="charts-grid">
         <VerticalBars
           title="Daily reading"
-          subtitle="Last 30 active days"
           data={dashboard.charts.daily}
           valueKey="minutes"
         />
         <VerticalBars
           title="Monthly reading"
-          subtitle="Last 12 active months"
           data={dashboard.charts.monthly}
           valueKey="hours"
         />
@@ -457,7 +418,6 @@ function SnapshotsView({
     <section className="recent-panel">
       <header>
         <h3>Snapshots</h3>
-        <span className="panel-note">Timestamped local copies</span>
       </header>
       <div className="table-wrap">
         <table className="data-table snapshots-table">
@@ -551,10 +511,12 @@ function CalendarView({ calendar }: { calendar: Dashboard["charts"]["calendar"] 
           <span className="panel-note">{dateRange}</span>
         </div>
         <div className="calendar-summary" aria-label="Calendar summary">
-          <strong>{calendar.total_days.toLocaleString()}</strong>
-          <span>reading days</span>
-          <strong>{peakLabel}</strong>
-          <span>peak day</span>
+          <span>
+            <strong>{calendar.total_days.toLocaleString()}</strong> days
+          </span>
+          <span>
+            <strong>{peakLabel}</strong> peak
+          </span>
         </div>
       </header>
       {calendar.days.length === 0 ? (
@@ -646,7 +608,6 @@ function ExportView({ dashboard }: { dashboard: Dashboard }) {
   return (
     <section className="empty-state">
       <h2>Export</h2>
-      <p>Download the currently selected local snapshot analysis. Exports are generated in your browser.</p>
       <div className="actions">
         <button className="primary" disabled={!dashboard.has_data} onClick={exportJson}>
           Export dashboard JSON
@@ -668,6 +629,10 @@ function SettingsView({
   snapshots: Snapshot[];
   onRefresh: () => void;
 }) {
+  const candidateDiagnostics = (device?.candidates ?? []).filter(
+    (candidate) => candidate.error || (candidate.exists && !candidate.readable),
+  );
+
   return (
     <section className="settings-panel">
       <header>
@@ -680,28 +645,24 @@ function SettingsView({
           <dd>{device?.mount_path ?? "/Volumes/KOBOeReader"}</dd>
         </div>
         <div>
-          <dt>Device polling</dt>
-          <dd>Every 15 seconds while the app is open</dd>
-        </div>
-        <div>
           <dt>Local snapshots</dt>
           <dd>{snapshots.length}</dd>
         </div>
-        <div>
-          <dt>Privacy</dt>
-          <dd>Local only. No data leaves this Mac.</dd>
-        </div>
       </dl>
-      <h4>KOReader database candidates</h4>
-      <div className="candidate-list">
-        {(device?.candidates ?? []).map((candidate) => (
-          <div key={candidate.path}>
-            <span>{candidate.readable ? "Readable" : candidate.exists ? "Blocked" : "Missing"}</span>
-            <code>{candidate.path}</code>
-            {candidate.error ? <em>{candidate.error}</em> : null}
+      {candidateDiagnostics.length > 0 ? (
+        <>
+          <h4>Access issues</h4>
+          <div className="candidate-list">
+            {candidateDiagnostics.map((candidate) => (
+              <div key={candidate.path}>
+                <span>{candidate.readable ? "Readable" : candidate.exists ? "Blocked" : "Missing"}</span>
+                <code>{candidate.path}</code>
+                {candidate.error ? <em>{candidate.error}</em> : null}
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </>
+      ) : null}
     </section>
   );
 }
@@ -712,7 +673,6 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [activeView, setActiveView] = useState<View>("dashboard");
   const [error, setError] = useState<string | null>(null);
-  const [lastAutoImport, setLastAutoImport] = useState<Snapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const selectedSnapshotId = useRef<string | null>(null);
@@ -722,9 +682,6 @@ export default function App() {
     if (deviceStatus.mounted && deviceStatus.database_found && !deviceStatus.permission_error) {
       const autoResult = await autoImportFromKobo();
       deviceStatus = autoResult.device;
-      if (autoResult.imported) {
-        setLastAutoImport(autoResult.snapshot);
-      }
     }
     const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
     const [dashboardData, snapshotData] = await Promise.all([getDashboard(dashboardSnapshotId), getSnapshots()]);
@@ -762,7 +719,6 @@ export default function App() {
     try {
       const result = await importFromKobo();
       selectedSnapshotId.current = null;
-      setLastAutoImport(null);
       setDashboard(result.dashboard);
       setActiveView("dashboard");
       await refresh();
@@ -780,7 +736,6 @@ export default function App() {
     try {
       const result = await uploadDatabase(file);
       selectedSnapshotId.current = null;
-      setLastAutoImport(null);
       setDashboard(result.dashboard);
       setActiveView("dashboard");
       await refresh();
@@ -794,8 +749,6 @@ export default function App() {
 
   const latestSnapshot = snapshots[0] ?? dashboard.snapshot ?? null;
   const activeSnapshot = dashboard.snapshot ?? latestSnapshot;
-  const isViewingLatest = Boolean(latestSnapshot && activeSnapshot?.id === latestSnapshot.id);
-  const noKoboWithData = device && !device.mounted && dashboard.has_data;
   const navItems: Array<{ id: View; label: string; icon: string }> = [
     { id: "dashboard", label: "Dashboard", icon: "⌂" },
     { id: "snapshots", label: "Snapshots", icon: "◎" },
@@ -811,7 +764,6 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <h1>kostats</h1>
-          <p>KOReader reading statistics</p>
         </div>
         <nav aria-label="Primary navigation">
           {navItems.map((item) => (
@@ -826,20 +778,17 @@ export default function App() {
           ))}
         </nav>
         <div className="storage-card">
-          <strong>Storage</strong>
-          <span>Snapshots: {snapshots.length}</span>
-          <span>Local only</span>
-          <span>No data leaves this Mac</span>
+          <strong>{snapshots.length} snapshots</strong>
         </div>
       </aside>
 
-      <main>
+      <main style={mainLayoutStyle}>
         <DeviceBanner
           status={device}
+          activeSnapshot={activeSnapshot}
           latestSnapshot={latestSnapshot}
           onImport={handleImport}
           onUploadClick={() => fileInput.current?.click()}
-          lastAutoImport={lastAutoImport}
           busy={busy}
         />
         <input
@@ -856,20 +805,6 @@ export default function App() {
             macOS denied direct access to the Kobo database. Use Upload DB or grant this app permission to read the Kobo volume.
           </div>
         ) : null}
-        {noKoboWithData ? (
-          <div className="alert info">
-            Kobo is not mounted. Showing stats from the {isViewingLatest ? "latest" : "selected"} local snapshot.
-          </div>
-        ) : null}
-        {lastAutoImport ? (
-          <div className="alert success">
-            Auto-imported Kobo database at {formatDateTime(lastAutoImport.imported_at)}.{" "}
-            {isViewingLatest ? "Showing the newest local snapshot." : "Selected snapshot remains open."}
-          </div>
-        ) : null}
-
-        <SnapshotPanel snapshot={activeSnapshot} />
-
         {activeView === "dashboard" ? <DashboardView dashboard={dashboard} /> : null}
         {activeView === "snapshots" ? (
           <SnapshotsView

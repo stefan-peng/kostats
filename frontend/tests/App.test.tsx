@@ -195,7 +195,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("No local KOReader database yet")).toBeInTheDocument();
+    expect(await screen.findByText("No database yet")).toBeInTheDocument();
     expect(screen.getByText("Kobo not mounted")).toBeInTheDocument();
   });
 
@@ -218,7 +218,7 @@ describe("App", () => {
     render(<App />);
 
     expect((await screen.findAllByText("1h 30m")).length).toBeGreaterThan(0);
-    expect(screen.getByText("Kobo is not mounted. Showing stats from the latest local snapshot.")).toBeInTheDocument();
+    expect(screen.getByText("Kobo not mounted")).toBeInTheDocument();
     expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
   });
 
@@ -259,7 +259,7 @@ describe("App", () => {
     expect(screen.getAllByRole("button", { name: /Upload DB/i }).length).toBeGreaterThan(0);
   });
 
-  it("announces an automatic Kobo import during startup sync", async () => {
+  it("shows an automatic Kobo import during startup sync", async () => {
     const mountedStatus = {
       mount_path: "/Volumes/KOBOeReader",
       mounted: true,
@@ -285,9 +285,9 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText(/Auto-imported Kobo database at/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Auto Kobo import:/).length).toBeGreaterThan(0);
-    expect(within(screen.getByLabelText("Device import status")).getByText(/Auto-imported/)).toBeInTheDocument();
+    const deviceBanner = within(screen.getByLabelText("Device import status"));
+    expect(await deviceBanner.findByText("Ready to import")).toBeInTheDocument();
+    expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
   });
 
   it("makes sidebar sections navigable", async () => {
@@ -327,7 +327,30 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Settings/i }));
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
-    expect(screen.getByText("Every 15 seconds while the app is open")).toBeInTheDocument();
+    expect(screen.getByText("Kobo mount path")).toBeInTheDocument();
+    expect(screen.getByText("Local snapshots")).toBeInTheDocument();
+  });
+
+  it("keeps sparse page panels from stretching to fill the viewport", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+
+    expect(document.querySelector("main")).toHaveStyle({ alignContent: "start" });
   });
 
   it("keeps latest import metadata separate from the selected snapshot", async () => {
@@ -353,9 +376,11 @@ describe("App", () => {
     await userEvent.click(screen.getAllByRole("button", { name: "View" })[0]);
 
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
-    expect(screen.getByText("Kobo is not mounted. Showing stats from the selected local snapshot.")).toBeInTheDocument();
-    expect(screen.getByText(olderSnapshot.id)).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Device import status")).getByText(/May 31, 2026/)).toBeInTheDocument();
+    const deviceBanner = within(screen.getByLabelText("Device import status"));
+    expect(deviceBanner.getByText("Viewing")).toBeInTheDocument();
+    expect(deviceBanner.getByText(/May 1, 2026/)).toBeInTheDocument();
+    expect(deviceBanner.getByText("Latest")).toBeInTheDocument();
+    expect(deviceBanner.getByText(/May 31, 2026/)).toBeInTheDocument();
   });
 
   it("preserves a selected snapshot when refresh auto-imports a newer database", async () => {
@@ -409,9 +434,11 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Dashboard/i }));
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Selected snapshot remains open/)).toBeInTheDocument();
-    expect(screen.getByText(olderSnapshot.id)).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Device import status")).getAllByText(/Jun 1, 2026/).length).toBeGreaterThan(0);
+    const deviceBanner = within(screen.getByLabelText("Device import status"));
+    expect(deviceBanner.getByText("Viewing")).toBeInTheDocument();
+    expect(deviceBanner.getByText(/May 1, 2026/)).toBeInTheDocument();
+    expect(deviceBanner.getByText("Latest")).toBeInTheDocument();
+    expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
   });
 
   it("exports selected dashboard data", async () => {
