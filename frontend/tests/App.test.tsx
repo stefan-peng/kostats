@@ -350,6 +350,32 @@ describe("App", () => {
     expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
   });
 
+  it("continues showing local snapshot data when startup auto-import fails", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return new Error("Unsupported KOReader statistics schema: missing book table");
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText(/Auto-import failed:/)).toBeInTheDocument();
+    expect(screen.getByText(/Unsupported KOReader statistics schema/)).toBeInTheDocument();
+    expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
+    expect(screen.getByText("1 snapshots")).toBeInTheDocument();
+  });
+
   it("makes sidebar sections navigable", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
@@ -374,6 +400,8 @@ describe("App", () => {
     });
 
     render(<App />);
+
+    expect(screen.queryByRole("button", { name: /Statistics/i })).not.toBeInTheDocument();
 
     await userEvent.click(await screen.findByRole("button", { name: /Snapshots/i }));
     expect(screen.getByRole("heading", { name: "Snapshots" })).toBeInTheDocument();

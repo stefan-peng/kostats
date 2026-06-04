@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from backend.app.errors import UnsupportedSchemaError
-from backend.app.sqlite_stats import build_dashboard
+from backend.app.sqlite_stats import build_dashboard, current_streak
 
 
 def ts(year: int, month: int, day: int, hour: int = 12) -> int:
@@ -218,7 +218,7 @@ def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "statistics.sqlite3"
     create_current_db(db_path)
 
-    dashboard = build_dashboard(db_path)
+    dashboard = build_dashboard(db_path, today=date(2026, 2, 2))
 
     assert dashboard["has_data"] is True
     assert dashboard["summary"]["total_time_seconds"] == 7200
@@ -240,6 +240,37 @@ def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     assert dashboard["books"][0]["source_md5s"] == []
     assert dashboard["books"][0]["merged_count"] == 1
     assert dashboard["recent_books"][0]["title"] == "The Left Hand of Darkness"
+
+
+def test_current_streak_counts_through_today() -> None:
+    streak = current_streak(
+        {"2026-06-01", "2026-06-02", "2026-06-03"},
+        today=date(2026, 6, 3),
+    )
+
+    assert streak == 3
+
+
+def test_current_streak_tolerates_latest_reading_yesterday() -> None:
+    streak = current_streak(
+        {"2026-06-01", "2026-06-02"},
+        today=date(2026, 6, 3),
+    )
+
+    assert streak == 2
+
+
+def test_current_streak_is_zero_for_stale_history() -> None:
+    streak = current_streak(
+        {"2026-05-29", "2026-05-30"},
+        today=date(2026, 6, 3),
+    )
+
+    assert streak == 0
+
+
+def test_current_streak_is_zero_without_reading_days() -> None:
+    assert current_streak(set(), today=date(2026, 6, 3)) == 0
 
 
 def test_build_dashboard_from_page_stat_fallback(tmp_path: Path) -> None:

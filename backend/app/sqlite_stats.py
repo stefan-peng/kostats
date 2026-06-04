@@ -7,7 +7,7 @@ import sqlite3
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -183,10 +183,14 @@ class UnionFind:
         self.parents[second_root] = first_root
 
 
-def current_streak(day_keys: set[str]) -> int:
+def current_streak(day_keys: set[str], today: date | None = None) -> int:
     if not day_keys:
         return 0
-    current = datetime.strptime(max(day_keys), "%Y-%m-%d").date()
+    reference_day = today or datetime.now().astimezone().date()
+    latest_day = datetime.strptime(max(day_keys), "%Y-%m-%d").date()
+    if latest_day not in {reference_day, reference_day - timedelta(days=1)}:
+        return 0
+    current = latest_day
     streak = 0
     while current.isoformat() in day_keys:
         streak += 1
@@ -202,7 +206,11 @@ def latest_snapshot_from_manifest(manifest: dict[str, Any]) -> SnapshotMeta | No
     return SnapshotMeta(**latest)
 
 
-def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[str, Any]:
+def build_dashboard(
+    path: Path,
+    snapshot: SnapshotMeta | None = None,
+    today: date | None = None,
+) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(path)
 
@@ -438,7 +446,7 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
             "reading_days": len(day_seconds),
             "books": len(book_stats),
             "pages": sum(book["pages"] for book in book_stats),
-            "current_streak": current_streak(set(day_seconds)),
+            "current_streak": current_streak(set(day_seconds), today=today),
         },
         "charts": {
             "daily": [

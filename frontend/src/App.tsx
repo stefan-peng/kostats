@@ -10,7 +10,7 @@ import {
 } from "./api";
 import type { BookStats, Dashboard, DeviceStatus, Snapshot } from "./types";
 
-type View = "dashboard" | "snapshots" | "books" | "statistics" | "calendar" | "export" | "settings";
+type View = "dashboard" | "snapshots" | "books" | "calendar" | "export" | "settings";
 type BookSortKey = "last_open" | "time_seconds" | "pages" | "progress" | "title";
 type BookProgressFilter = "all" | "in-progress" | "finished" | "unknown";
 
@@ -673,14 +673,6 @@ function SnapshotsView({
   );
 }
 
-function StatisticsView({ dashboard }: { dashboard: Dashboard }) {
-  return (
-    <>
-      <DashboardView dashboard={dashboard} />
-    </>
-  );
-}
-
 function CalendarView({ calendar }: { calendar: Dashboard["charts"]["calendar"] }) {
   const { cells, weeks, monthLabels } = useMemo(() => buildCalendarCells(calendar), [calendar]);
   const dateRange =
@@ -870,26 +862,34 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [activeView, setActiveView] = useState<View>("dashboard");
   const [error, setError] = useState<string | null>(null);
+  const [autoImportError, setAutoImportError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const selectedSnapshotId = useRef<string | null>(null);
 
   async function refresh() {
     let deviceStatus = await getDeviceStatus();
+    let nextAutoImportError: string | null = null;
     if (deviceStatus.mounted && deviceStatus.database_found && !deviceStatus.permission_error) {
-      const autoResult = await autoImportFromKobo();
-      deviceStatus = autoResult.device;
+      try {
+        const autoResult = await autoImportFromKobo();
+        deviceStatus = autoResult.device;
+      } catch (err) {
+        nextAutoImportError = `Auto-import failed: ${err instanceof Error ? err.message : "Could not import from Kobo"}`;
+      }
     }
     const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
     const [dashboardData, snapshotData] = await Promise.all([getDashboard(dashboardSnapshotId), getSnapshots()]);
     setDevice(deviceStatus);
     setDashboard(dashboardData);
     setSnapshots(snapshotData.snapshots);
+    setAutoImportError(nextAutoImportError);
   }
 
   async function loadSnapshot(snapshotId: string) {
     setBusy(true);
     setError(null);
+    setAutoImportError(null);
     try {
       const selectedDashboard = await getDashboard(snapshotId);
       selectedSnapshotId.current = snapshotId;
@@ -913,6 +913,7 @@ export default function App() {
   async function handleImport() {
     setBusy(true);
     setError(null);
+    setAutoImportError(null);
     try {
       const result = await importFromKobo();
       selectedSnapshotId.current = null;
@@ -930,6 +931,7 @@ export default function App() {
     if (!file) return;
     setBusy(true);
     setError(null);
+    setAutoImportError(null);
     try {
       const result = await uploadDatabase(file);
       selectedSnapshotId.current = null;
@@ -950,7 +952,6 @@ export default function App() {
     { id: "dashboard", label: "Dashboard", icon: "⌂" },
     { id: "snapshots", label: "Snapshots", icon: "◎" },
     { id: "books", label: "Books", icon: "□" },
-    { id: "statistics", label: "Statistics", icon: "▥" },
     { id: "calendar", label: "Calendar", icon: "◷" },
     { id: "export", label: "Export", icon: "⇩" },
     { id: "settings", label: "Settings", icon: "⚙" },
@@ -997,6 +998,7 @@ export default function App() {
         />
 
         {error ? <div className="alert error">{error}</div> : null}
+        {autoImportError ? <div className="alert error">{autoImportError}</div> : null}
         {device?.permission_error ? (
           <div className="alert error">
             macOS denied direct access to the Kobo database. Use Upload DB or grant this app permission to read the Kobo volume.
@@ -1011,7 +1013,6 @@ export default function App() {
           />
         ) : null}
         {activeView === "books" ? <BooksView books={dashboard.books} /> : null}
-        {activeView === "statistics" ? <StatisticsView dashboard={dashboard} /> : null}
         {activeView === "calendar" ? <CalendarView calendar={dashboard.charts.calendar} /> : null}
         {activeView === "export" ? <ExportView dashboard={dashboard} /> : null}
         {activeView === "settings" ? (
