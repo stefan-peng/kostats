@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from backend.app.device import auto_import_from_kobo, device_status, import_from_kobo
+from backend.app import config
+from backend.app.device import CandidateStatus, auto_import_from_kobo, device_status, import_from_kobo
 from backend.app.errors import ImportError, UnsupportedSchemaError
 from backend.app.storage import SnapshotStore
 
@@ -125,6 +126,99 @@ def test_device_status_reports_absent_volume(tmp_path: Path) -> None:
     status = device_status(missing)
 
     assert status["mounted"] is False
+    assert status["database_found"] is False
+    assert status["selected_path"] is None
+    assert status["searched_mount_paths"] == [str(missing)]
+
+
+def test_device_status_discovers_kobo_on_windows_drive_candidates(monkeypatch, tmp_path: Path) -> None:
+    other_drive = tmp_path / "C"
+    kobo_drive = tmp_path / "E"
+    other_drive.mkdir()
+    db_path = kobo_drive / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    monkeypatch.setattr("backend.app.device.kobo_volume_candidates", lambda: [other_drive, kobo_drive])
+
+    status = device_status()
+
+    assert status["mounted"] is True
+    assert status["database_found"] is True
+    assert status["mount_path"] == str(kobo_drive)
+    assert status["selected_path"] == str(db_path)
+    assert status["searched_mount_paths"] == [str(other_drive), str(kobo_drive)]
+
+
+def test_device_status_ignores_errors_from_unselected_scan_roots(monkeypatch, tmp_path: Path) -> None:
+    blocked_drive = tmp_path / "C"
+    kobo_drive = tmp_path / "E"
+    blocked_drive.mkdir()
+    db_path = kobo_drive / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    monkeypatch.setattr("backend.app.device.kobo_volume_candidates", lambda: [blocked_drive, kobo_drive])
+
+    def fake_inspect_volume(root: Path) -> tuple[bool, list[CandidateStatus]]:
+        if root == blocked_drive:
+            return True, [CandidateStatus(str(root / ".adds/koreader/settings/statistics.sqlite3"), True, False, "denied")]
+        return True, [CandidateStatus(str(db_path), True, True)]
+
+    monkeypatch.setattr("backend.app.device.inspect_volume", fake_inspect_volume)
+
+    status = device_status()
+
+    assert status["database_found"] is True
+    assert status["mount_path"] == str(kobo_drive)
+    assert status["permission_error"] is None
+
+
+def test_kobo_volume_candidates_prefers_configured_path(monkeypatch, tmp_path: Path) -> None:
+    configured = tmp_path / "manual-kobo"
+    auto_drive = tmp_path / "auto-kobo"
+    auto_drive.mkdir()
+    monkeypatch.setenv("KOSTATS_KOBO_VOLUME", str(configured))
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    monkeypatch.setattr(config, "windows_drive_roots", lambda: [auto_drive])
+    monkeypatch.setattr(config, "windows_volume_label", lambda root: "KOBOeReader")
+
+    assert config.kobo_volume_candidates() == [configured]
+
+
+def test_kobo_volume_candidates_scans_existing_windows_drives(monkeypatch, tmp_path: Path) -> None:
+    labeled_drive = tmp_path / "E"
+    fallback_drive = tmp_path / "F"
+    missing_drive = tmp_path / "G"
+    labeled_drive.mkdir()
+    fallback_drive.mkdir()
+    monkeypatch.delenv("KOSTATS_KOBO_VOLUME", raising=False)
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    monkeypatch.setattr(config, "windows_drive_roots", lambda: [fallback_drive, missing_drive, labeled_drive])
+    monkeypatch.setattr(config, "windows_volume_label", lambda root: "KOBOeReader" if root == labeled_drive else None)
+
+    assert config.kobo_volume_candidates() == [labeled_drive, fallback_drive]
+
+
+def test_device_status_reports_windows_not_connected(monkeypatch, tmp_path: Path) -> None:
+    drive = tmp_path / "C"
+    drive.mkdir()
+    monkeypatch.setattr("backend.app.device.kobo_volume_candidates", lambda: [drive])
+
+    status = device_status()
+
+    assert status["mounted"] is False
+    assert status["database_found"] is False
+    assert status["selected_path"] is None
+    assert status["searched_mount_paths"] == [str(drive)]
+
+
+def test_device_status_reports_default_mount_without_database(monkeypatch, tmp_path: Path) -> None:
+    mounted_volume = tmp_path / "KOBOeReader"
+    mounted_volume.mkdir()
+    monkeypatch.setattr("backend.app.device.kobo_volume_candidates", lambda: [mounted_volume])
+    monkeypatch.setattr("backend.app.device.kobo_volume_is_configured", lambda: False)
+    monkeypatch.setattr("backend.app.device.kobo_volume_is_default_mount_path", lambda root: root == mounted_volume)
+
+    status = device_status()
+
+    assert status["mounted"] is True
     assert status["database_found"] is False
     assert status["selected_path"] is None
 

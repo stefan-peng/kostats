@@ -212,6 +212,11 @@ const autoDashboard = {
   snapshot: autoSnapshot,
 };
 
+const windowsAutoSnapshot = {
+  ...autoSnapshot,
+  source_path: "E:\\.adds\\koreader\\settings\\statistics.sqlite3",
+};
+
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -301,7 +306,7 @@ describe("App", () => {
         };
       }
       if (url.startsWith("/api/import/kobo") && init?.method === "POST") {
-        return new Error("Kobo is mounted, but macOS denied access to the KOReader database.");
+        return new Error("Kobo is mounted, but the app could not read the KOReader database.");
       }
       if (url.startsWith("/api/device/status")) {
         return mountedStatus;
@@ -314,9 +319,42 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Import from Kobo/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/macOS denied access/)).toBeInTheDocument();
+      expect(screen.getByText(/could not read the KOReader database/)).toBeInTheDocument();
     });
     expect(screen.getAllByRole("button", { name: /Upload DB/i }).length).toBeGreaterThan(0);
+  });
+
+  it("renders Windows Kobo paths and still auto-imports on startup", async () => {
+    const mountedStatus = {
+      mount_path: "E:\\",
+      mounted: true,
+      database_found: true,
+      selected_path: "E:\\.adds\\koreader\\settings\\statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+      searched_mount_paths: ["C:\\", "E:\\"],
+    };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return {
+          imported: true,
+          reason: "changed",
+          snapshot: windowsAutoSnapshot,
+          device: mountedStatus,
+          dashboard: { ...autoDashboard, snapshot: windowsAutoSnapshot },
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [windowsAutoSnapshot] };
+      return { ...autoDashboard, snapshot: windowsAutoSnapshot };
+    });
+
+    render(<App />);
+
+    const deviceBanner = within(screen.getByLabelText("Device import status"));
+    expect(await deviceBanner.findByText("Ready to import")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Snapshots/i }));
+    expect(screen.getByText(/E:\\.adds\\koreader\\settings\\statistics.sqlite3/)).toBeInTheDocument();
   });
 
   it("shows an automatic Kobo import during startup sync", async () => {

@@ -12,6 +12,7 @@ export type DeviceStatus = {
   selected_path: string | null;
   permission_error: string | null;
   candidates: CandidateStatus[];
+  searched_mount_paths?: string[];
 };
 
 export type Snapshot = {

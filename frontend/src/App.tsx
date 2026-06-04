@@ -831,7 +831,7 @@ function SettingsView({
       <dl>
         <div>
           <dt>Kobo mount path</dt>
-          <dd>{device?.mount_path ?? "/Volumes/KOBOeReader"}</dd>
+          <dd>{device?.mount_path ?? "Auto-detect"}</dd>
         </div>
         <div>
           <dt>Local snapshots</dt>
@@ -1001,7 +1001,7 @@ export default function App() {
         {autoImportError ? <div className="alert error">{autoImportError}</div> : null}
         {device?.permission_error ? (
           <div className="alert error">
-            macOS denied direct access to the Kobo database. Use Upload DB or grant this app permission to read the Kobo volume.
+            The app could not read the KOReader database. Use Upload DB or grant this app permission to read the Kobo volume.
           </div>
         ) : null}
         {activeView === "dashboard" ? <DashboardView dashboard={dashboard} /> : null}

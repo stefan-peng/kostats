@@ -15,7 +15,9 @@ npm run dev --prefix frontend
 
 Open the Vite URL shown by npm, usually `http://127.0.0.1:5173`.
 
-The app works when the Kobo is not connected. On startup and while open, it checks whether `/Volumes/KOBOeReader` is mounted, imports a new local snapshot only when the KOReader database has changed, and continues showing the latest local snapshot if no device is present.
+The app works when the Kobo is not connected. On startup and while open, it looks for a mounted Kobo, imports a new local snapshot only when the KOReader database has changed, and continues showing the latest local snapshot if no device is present. macOS/Linux defaults to `/Volumes/KOBOeReader`; Windows scans mounted drive letters such as `E:\` for a Kobo volume or KOReader statistics database.
+
+Set `KOSTATS_KOBO_VOLUME` to override auto-detection, for example `KOSTATS_KOBO_VOLUME=E:\` on Windows or `KOSTATS_KOBO_VOLUME=/Volumes/KOBOeReader` on macOS.
 
 ## Tests
 

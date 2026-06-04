@@ -6,10 +6,11 @@ import re
 import sqlite3
 import unicodedata
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .errors import UnsupportedSchemaError
 
@@ -31,11 +32,15 @@ def quote_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
-def open_readonly(path: Path) -> sqlite3.Connection:
+@contextmanager
+def open_readonly(path: Path) -> Iterator[sqlite3.Connection]:
     uri = f"file:{path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def read_user_version(path: Path) -> int:
@@ -86,6 +91,12 @@ def month_key(dt: datetime) -> str:
 def month_label(key: str) -> str:
     year, month = [int(part) for part in key.split("-")]
     return f"{calendar.month_abbr[month]} {str(year)[2:]}"
+
+
+def day_label(key: str, *, include_year: bool = False) -> str:
+    value = datetime.strptime(key, "%Y-%m-%d")
+    suffix = f", {value.year}" if include_year else ""
+    return f"{calendar.month_abbr[value.month]} {value.day}{suffix}"
 
 
 def seconds_to_minutes(seconds: float) -> float:
@@ -452,7 +463,7 @@ def build_dashboard(
             "daily": [
                 {
                     "date": key,
-                    "label": datetime.strptime(key, "%Y-%m-%d").strftime("%b %-d"),
+                    "label": day_label(key),
                     "minutes": seconds_to_minutes(day_seconds[key]),
                 }
                 for key in latest_days
@@ -481,7 +492,7 @@ def build_dashboard(
                 "days": [
                     {
                         "date": key,
-                        "label": datetime.strptime(key, "%Y-%m-%d").strftime("%b %-d, %Y"),
+                        "label": day_label(key, include_year=True),
                         "minutes": seconds_to_minutes(day_seconds[key]),
                         "time_label": format_duration(day_seconds[key]),
                         "level": calendar_level(day_seconds[key], max_day_seconds),

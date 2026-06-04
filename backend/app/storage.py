@@ -4,6 +4,7 @@ import json
 import hashlib
 import shutil
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -170,8 +171,8 @@ class SnapshotStore:
 
 def copy_sqlite_database(source: Path, destination: Path) -> None:
     source_uri = f"{source.resolve().as_uri()}?mode=ro"
-    with sqlite3.connect(source_uri, uri=True) as source_conn:
-        with sqlite3.connect(destination) as destination_conn:
+    with closing(sqlite3.connect(source_uri, uri=True)) as source_conn:
+        with closing(sqlite3.connect(destination)) as destination_conn:
             source_conn.backup(destination_conn)
 
 
