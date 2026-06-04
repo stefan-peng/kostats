@@ -41,6 +41,7 @@ def test_empty_dashboard_without_snapshot(monkeypatch, tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["has_data"] is False
+    assert response.json()["books"] == []
 
 
 def test_upload_import_and_dashboard(monkeypatch, tmp_path: Path) -> None:
@@ -60,6 +61,7 @@ def test_upload_import_and_dashboard(monkeypatch, tmp_path: Path) -> None:
     assert payload["dashboard"]["summary"]["total_time_label"] == "20m"
 
     dashboard = client.get("/api/dashboard").json()
+    assert dashboard["books"][0]["title"] == "Kindred"
     assert dashboard["recent_books"][0]["title"] == "Kindred"
 
 

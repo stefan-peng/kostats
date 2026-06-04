@@ -122,6 +122,7 @@ def get_dashboard(snapshot_id: str = "latest") -> dict:
                     "days": [],
                 },
             },
+            "books": [],
             "recent_books": [],
         }
     try:

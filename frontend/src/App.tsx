@@ -8,9 +8,11 @@ import {
   importFromKobo,
   uploadDatabase,
 } from "./api";
-import type { Dashboard, DeviceStatus, Snapshot } from "./types";
+import type { BookStats, Dashboard, DeviceStatus, Snapshot } from "./types";
 
 type View = "dashboard" | "snapshots" | "books" | "statistics" | "calendar" | "export" | "settings";
+type BookSortKey = "last_open" | "time_seconds" | "pages" | "progress" | "title";
+type BookProgressFilter = "all" | "in-progress" | "finished" | "unknown";
 
 const emptyDashboard: Dashboard = {
   has_data: false,
@@ -35,6 +37,7 @@ const emptyDashboard: Dashboard = {
       days: [],
     },
   },
+  books: [],
   recent_books: [],
 };
 
@@ -85,6 +88,14 @@ function formatMinutes(minutes: number) {
   return remainder ? `${hours}h ${String(remainder).padStart(2, "0")}m` : `${hours}h`;
 }
 
+function formatDurationLabel(seconds: number) {
+  const totalMinutes = Math.round(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  return `${minutes}m`;
+}
+
 function buildCalendarCells(calendar: Dashboard["charts"]["calendar"]) {
   if (!calendar.start_date || !calendar.end_date || calendar.days.length === 0) {
     return { cells: [] as CalendarCell[], weeks: 0, monthLabels: [] as Array<{ week: number; label: string }> };
@@ -133,6 +144,30 @@ function formatBytes(bytes: number) {
   const units = ["B", "KB", "MB", "GB"];
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
   return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function formatProgress(book: BookStats) {
+  return book.progress == null ? "N/A" : `${book.progress}%`;
+}
+
+function formatPageProgress(book: BookStats) {
+  if (book.max_page == null && book.total_pages == null) return "Unknown";
+  if (book.total_pages == null) return `Page ${book.max_page?.toLocaleString() ?? "?"}`;
+  return `${book.max_page?.toLocaleString() ?? "?"} / ${book.total_pages.toLocaleString()}`;
+}
+
+function matchesProgressFilter(book: BookStats, filter: BookProgressFilter) {
+  if (filter === "all") return true;
+  if (filter === "unknown") return book.progress == null;
+  if (filter === "finished") return book.progress != null && book.progress >= 100;
+  return book.progress != null && book.progress < 100;
+}
+
+function compareNullableNumbers(a: number | null, b: number | null) {
+  if (a == null && b == null) return 0;
+  if (a == null) return -1;
+  if (b == null) return 1;
+  return a - b;
 }
 
 function escapeCsv(value: string | number | null | undefined) {
@@ -351,8 +386,158 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
                       <span>
                         <b style={{ width: `${book.progress ?? 0}%` }} />
                       </span>
-                      <em>{book.progress == null ? "N/A" : `${book.progress}%`}</em>
+                      <em>{formatProgress(book)}</em>
                     </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function BooksView({ books }: { books: BookStats[] }) {
+  const [query, setQuery] = useState("");
+  const [progressFilter, setProgressFilter] = useState<BookProgressFilter>("all");
+  const [sortKey, setSortKey] = useState<BookSortKey>("last_open");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+
+  const filteredBooks = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const sorted = books
+      .filter((book) => {
+        const haystack = `${book.title} ${book.authors}`.toLocaleLowerCase();
+        return (!normalizedQuery || haystack.includes(normalizedQuery)) && matchesProgressFilter(book, progressFilter);
+      })
+      .sort((a, b) => {
+        let result = 0;
+        if (sortKey === "title") {
+          result = a.title.localeCompare(b.title);
+        } else if (sortKey === "last_open") {
+          result = (a.last_open ?? "").localeCompare(b.last_open ?? "");
+        } else if (sortKey === "progress") {
+          result = compareNullableNumbers(a.progress, b.progress);
+        } else {
+          result = a[sortKey] - b[sortKey];
+        }
+        if (result === 0) result = a.title.localeCompare(b.title);
+        return sortDirection === "asc" ? result : -result;
+      });
+    return sorted;
+  }, [books, progressFilter, query, sortDirection, sortKey]);
+
+  const totalTimeSeconds = filteredBooks.reduce((total, book) => total + book.time_seconds, 0);
+  const totalPages = filteredBooks.reduce((total, book) => total + book.pages, 0);
+
+  return (
+    <section className="recent-panel books-panel">
+      <header>
+        <div>
+          <h3>Books</h3>
+          <span className="panel-note">
+            {filteredBooks.length.toLocaleString()} of {books.length.toLocaleString()} books
+          </span>
+        </div>
+        <div className="books-summary" aria-label="Filtered book summary">
+          <span>
+            <strong>{formatDurationLabel(totalTimeSeconds)}</strong> total
+          </span>
+          <span>
+            <strong>{totalPages.toLocaleString()}</strong> pages seen
+          </span>
+        </div>
+      </header>
+      <div className="books-controls" aria-label="Book table controls">
+        <label>
+          Search
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Title or author"
+            type="search"
+          />
+        </label>
+        <label>
+          Progress
+          <select value={progressFilter} onChange={(event) => setProgressFilter(event.target.value as BookProgressFilter)}>
+            <option value="all">All books</option>
+            <option value="in-progress">In progress</option>
+            <option value="finished">Finished</option>
+            <option value="unknown">Unknown progress</option>
+          </select>
+        </label>
+        <label>
+          Sort
+          <select value={sortKey} onChange={(event) => setSortKey(event.target.value as BookSortKey)}>
+            <option value="last_open">Last opened</option>
+            <option value="time_seconds">Reading time</option>
+            <option value="pages">Pages seen</option>
+            <option value="progress">Progress</option>
+            <option value="title">Title</option>
+          </select>
+        </label>
+        <button
+          className="secondary sort-direction"
+          onClick={() => setSortDirection((value) => (value === "asc" ? "desc" : "asc"))}
+          type="button"
+        >
+          {sortDirection === "asc" ? "Ascending" : "Descending"}
+        </button>
+      </div>
+      <div className="table-wrap">
+        <table className="data-table books-table">
+          <colgroup>
+            <col className="book-col" />
+            <col className="author-col" />
+            <col className="time-col" />
+            <col className="pages-col" />
+            <col className="position-col" />
+            <col className="progress-col" />
+            <col className="date-col" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Author</th>
+              <th>Time</th>
+              <th>Pages seen</th>
+              <th>Position</th>
+              <th>Progress</th>
+              <th>Last opened</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredBooks.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="empty-row">
+                  No books match the current filters.
+                </td>
+              </tr>
+            ) : (
+              filteredBooks.map((book) => (
+                <tr key={book.id}>
+                  <td className="book-title" title={book.title}>
+                    <span className="cell-truncate">{book.title}</span>
+                  </td>
+                  <td title={book.authors}>
+                    <span className="cell-truncate">{book.authors}</span>
+                  </td>
+                  <td>{book.time_label}</td>
+                  <td>{book.pages.toLocaleString()}</td>
+                  <td>{formatPageProgress(book)}</td>
+                  <td>
+                    <div className="progress-cell">
+                      <span>
+                        <b style={{ width: `${book.progress ?? 0}%` }} />
+                      </span>
+                      <em>{formatProgress(book)}</em>
+                    </div>
+                  </td>
+                  <td title={formatDateTime(book.last_open)}>
+                    <span className="cell-truncate">{formatDateTime(book.last_open)}</span>
                   </td>
                 </tr>
               ))
@@ -592,14 +777,15 @@ function ExportView({ dashboard }: { dashboard: Dashboard }) {
   }
 
   function exportBooksCsv() {
-    const header = ["Title", "Author", "Last opened", "Time", "Pages", "Progress"];
-    const rows = dashboard.recent_books.map((book) => [
+    const header = ["Title", "Author", "Last opened", "Time", "Pages seen", "Position", "Progress"];
+    const rows = dashboard.books.map((book) => [
       book.title,
       book.authors,
       book.last_open ?? "",
       book.time_label,
       book.pages,
-      book.progress == null ? "" : `${book.progress}%`,
+      formatPageProgress(book),
+      formatProgress(book),
     ]);
     const csv = [header, ...rows].map((row) => row.map(escapeCsv).join(",")).join("\n");
     downloadText("kostats-books.csv", `${csv}\n`, "text/csv");
@@ -813,7 +999,7 @@ export default function App() {
             onSelectSnapshot={loadSnapshot}
           />
         ) : null}
-        {activeView === "books" ? <RecentBooks books={dashboard.recent_books} /> : null}
+        {activeView === "books" ? <BooksView books={dashboard.books} /> : null}
         {activeView === "statistics" ? <StatisticsView dashboard={dashboard} /> : null}
         {activeView === "calendar" ? <CalendarView calendar={dashboard.charts.calendar} /> : null}
         {activeView === "export" ? <ExportView dashboard={dashboard} /> : null}

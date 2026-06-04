@@ -293,8 +293,9 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
             }
         )
 
-    recent_books.sort(key=lambda item: item["last_open"] or "", reverse=True)
-    top_books = sorted(recent_books, key=lambda item: item["time_seconds"], reverse=True)[:10]
+    book_stats = sorted(recent_books, key=lambda item: item["last_open"] or "", reverse=True)
+    recent_books = book_stats[:20]
+    top_books = sorted(book_stats, key=lambda item: item["time_seconds"], reverse=True)[:10]
 
     sorted_days = sorted(day_seconds)
     sorted_months = sorted(month_seconds)
@@ -355,5 +356,6 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
                 ],
             },
         },
-        "recent_books": recent_books[:20],
+        "books": book_stats,
+        "recent_books": recent_books,
     }

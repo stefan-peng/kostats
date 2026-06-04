@@ -27,6 +27,7 @@ const emptyDashboard = {
       days: [],
     },
   },
+  books: [],
   recent_books: [],
 };
 
@@ -84,6 +85,44 @@ const populatedDashboard = {
     top_books: [{ id: "1", title: "Piranesi", hours: 1.5 }],
     calendar: fullCalendar,
   },
+  books: [
+    {
+      id: "1",
+      title: "Piranesi",
+      authors: "Susanna Clarke",
+      last_open: "2026-05-31T12:00:00Z",
+      time_seconds: 5400,
+      time_label: "1h 30m",
+      pages: 8,
+      max_page: 80,
+      total_pages: 200,
+      progress: 40,
+    },
+    {
+      id: "2",
+      title: "A Wizard of Earthsea",
+      authors: "Ursula K. Le Guin",
+      last_open: "2026-05-28T10:00:00Z",
+      time_seconds: 7200,
+      time_label: "2h 00m",
+      pages: 34,
+      max_page: 180,
+      total_pages: 180,
+      progress: 100,
+    },
+    {
+      id: "3",
+      title: "Notes on a Small Planet",
+      authors: "Unknown author",
+      last_open: null,
+      time_seconds: 600,
+      time_label: "10m",
+      pages: 2,
+      max_page: null,
+      total_pages: null,
+      progress: null,
+    },
+  ],
   recent_books: [
     {
       id: "1",
@@ -329,6 +368,48 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByText("Kobo mount path")).toBeInTheDocument();
     expect(screen.getByText("Local snapshots")).toBeInTheDocument();
+  });
+
+  it("shows a filterable and sortable full Books view", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Books/i }));
+    expect(screen.getByRole("heading", { name: "Books" })).toBeInTheDocument();
+    expect(screen.getByText("3 of 3 books")).toBeInTheDocument();
+    expect(screen.getByText("3h 40m")).toBeInTheDocument();
+    expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
+    expect(screen.getByText("80 / 200")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Search"), "le guin");
+    expect(screen.getByText("1 of 3 books")).toBeInTheDocument();
+    expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
+    expect(screen.queryByText("Piranesi")).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Search"));
+    await userEvent.selectOptions(screen.getByLabelText("Progress"), "unknown");
+    expect(screen.getByText("Notes on a Small Planet")).toBeInTheDocument();
+    expect(screen.queryByText("A Wizard of Earthsea")).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Progress"), "all");
+    await userEvent.selectOptions(screen.getByLabelText("Sort"), "title");
+    await userEvent.click(screen.getByRole("button", { name: "Descending" }));
+    const rows = within(screen.getByRole("table")).getAllByRole("row");
+    expect(within(rows[1]).getByText("A Wizard of Earthsea")).toBeInTheDocument();
   });
 
   it("keeps sparse page panels from stretching to fill the viewport", async () => {

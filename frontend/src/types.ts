@@ -34,6 +34,19 @@ export type AutoImportResult = {
   dashboard?: Dashboard;
 };
 
+export type BookStats = {
+  id: string;
+  title: string;
+  authors: string;
+  last_open: string | null;
+  time_seconds: number;
+  time_label: string;
+  pages: number;
+  max_page: number | null;
+  total_pages: number | null;
+  progress: number | null;
+};
+
 export type Dashboard = {
   has_data: boolean;
   snapshot: Snapshot | null;
@@ -63,16 +76,6 @@ export type Dashboard = {
       }>;
     };
   };
-  recent_books: Array<{
-    id: string;
-    title: string;
-    authors: string;
-    last_open: string | null;
-    time_seconds: number;
-    time_label: string;
-    pages: number;
-    max_page: number | null;
-    total_pages: number | null;
-    progress: number | null;
-  }>;
+  books: BookStats[];
+  recent_books: BookStats[];
 };

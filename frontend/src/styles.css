@@ -588,6 +588,10 @@ table {
   min-width: 780px;
 }
 
+.books-table {
+  min-width: 1060px;
+}
+
 .snapshots-table {
   min-width: 920px;
 }
@@ -614,6 +618,34 @@ table {
 
 .recent-books-table .progress-col {
   width: 17%;
+}
+
+.books-table .book-col {
+  width: 25%;
+}
+
+.books-table .author-col {
+  width: 17%;
+}
+
+.books-table .time-col {
+  width: 9%;
+}
+
+.books-table .pages-col {
+  width: 10%;
+}
+
+.books-table .position-col {
+  width: 12%;
+}
+
+.books-table .progress-col {
+  width: 15%;
+}
+
+.books-table .date-col {
+  width: 12%;
 }
 
 .snapshots-table .imported-col {
@@ -691,6 +723,72 @@ td {
   color: var(--muted);
   text-align: center;
   padding: 30px;
+}
+
+.books-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.books-panel h3 {
+  margin: 0;
+}
+
+.books-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.books-summary strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.books-controls {
+  --sort-direction-width: 136px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 0.45fr) minmax(150px, 0.45fr) var(--sort-direction-width);
+  gap: 12px;
+  padding: 16px 18px;
+  align-items: end;
+}
+
+.books-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 0;
+}
+
+.books-controls input,
+.books-controls select {
+  width: 100%;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0 10px;
+  font: inherit;
+}
+
+.sort-direction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 38px;
+  padding: 0 16px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .table-action {
@@ -943,8 +1041,13 @@ td {
     flex-direction: column;
   }
 
+  .books-panel header,
   .actions {
     flex-wrap: wrap;
+  }
+
+  .books-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -980,6 +1083,15 @@ td {
 
   .snapshots-table {
     min-width: 680px;
+  }
+
+  .books-table {
+    min-width: 860px;
+  }
+
+  .books-controls {
+    grid-template-columns: 1fr;
+    padding: 14px;
   }
 
   .calendar-summary {
