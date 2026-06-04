@@ -159,6 +159,61 @@ def create_many_books_db(path: Path, count: int = 25) -> None:
     conn.close()
 
 
+def create_duplicate_books_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE book (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            authors TEXT,
+            last_open INTEGER,
+            pages INTEGER,
+            md5 TEXT,
+            series TEXT,
+            language TEXT
+        );
+        CREATE TABLE page_stat_data (
+            id_book INTEGER,
+            page INTEGER,
+            start_time INTEGER,
+            duration INTEGER,
+            total_pages INTEGER
+        );
+        INSERT INTO book VALUES
+            (1, 'Merged Work', 'Same Author', 1769904000, 100, 'aaa', 'Series A', 'en'),
+            (2, 'Merged Work', 'Same Author', 1769990400, 120, 'bbb', 'Series A', 'en'),
+            (3, 'Title Clash', 'Author One', 1770076800, 100, 'c1', NULL, 'en'),
+            (4, 'Title Clash', 'Author Two', 1770076860, 100, 'c2', NULL, 'en'),
+            (5, 'Placeholder Author', 'Unknown author', 1770076920, 100, 'p1', NULL, 'en'),
+            (6, 'Placeholder Author', 'Unknown author', 1770076980, 100, 'p2', NULL, 'en'),
+            (7, 'Language Conflict', 'Careful Writer', 1770077040, 100, 'l1', NULL, 'en'),
+            (8, 'Language Conflict', 'Careful Writer', 1770077100, 100, 'l2', NULL, 'fr'),
+            (9, 'Series Conflict', 'Careful Writer', 1770077160, 100, 's1', 'One', 'en'),
+            (10, 'Series Conflict', 'Careful Writer', 1770077220, 100, 's2', 'Two', 'en'),
+            (11, 'Similar Title', 'Same Author', 1770077280, 100, 't1', NULL, 'en'),
+            (12, 'Similar Title: Subtitle', 'Same Author', 1770077340, 100, 't2', NULL, 'en');
+        INSERT INTO page_stat_data VALUES
+            (1, 10, 1769904000, 100, 100),
+            (1, 11, 1769904060, 200, 100),
+            (2, 50, 1769990400, 300, 120),
+            (2, 60, 1769990460, 400, 120),
+            (3, 1, 1770076800, 60, 100),
+            (4, 1, 1770076860, 60, 100),
+            (5, 1, 1770076920, 60, 100),
+            (6, 1, 1770076980, 60, 100),
+            (7, 1, 1770077040, 60, 100),
+            (8, 1, 1770077100, 60, 100),
+            (9, 1, 1770077160, 60, 100),
+            (10, 1, 1770077220, 60, 100),
+            (11, 1, 1770077280, 60, 100),
+            (12, 1, 1770077340, 60, 100);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "statistics.sqlite3"
     create_current_db(db_path)
@@ -181,6 +236,9 @@ def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     assert dashboard["books"][0]["time_label"] == "1h 10m"
     assert dashboard["books"][0]["pages"] == 2
     assert dashboard["books"][0]["progress"] == 9
+    assert dashboard["books"][0]["source_book_ids"] == ["2"]
+    assert dashboard["books"][0]["source_md5s"] == []
+    assert dashboard["books"][0]["merged_count"] == 1
     assert dashboard["recent_books"][0]["title"] == "The Left Hand of Darkness"
 
 
@@ -241,6 +299,49 @@ def test_full_books_list_is_not_limited_to_recent_preview(tmp_path: Path) -> Non
     assert dashboard["books"][0]["title"] == "Book 25"
     assert dashboard["books"][-1]["title"] == "Book 01"
     assert dashboard["books"][0]["progress"] == 25
+
+
+def test_duplicate_book_records_merge_conservatively(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_duplicate_books_db(db_path)
+
+    dashboard = build_dashboard(db_path)
+    merged = next(book for book in dashboard["books"] if book["title"] == "Merged Work")
+
+    assert dashboard["summary"]["books"] == 11
+    assert len(dashboard["books"]) == 11
+    assert len(dashboard["recent_books"]) == 11
+    assert dashboard["summary"]["pages"] == 14
+    assert dashboard["charts"]["top_books"][0]["id"] == merged["id"]
+    assert merged["id"].startswith("merged:")
+    assert merged["time_seconds"] == 1000
+    assert merged["time_label"] == "17m"
+    assert merged["pages"] == 4
+    assert merged["max_page"] == 60
+    assert merged["total_pages"] == 120
+    assert merged["progress"] == 50
+    assert merged["source_book_ids"] == ["1", "2"]
+    assert merged["source_md5s"] == ["aaa", "bbb"]
+    assert merged["merged_count"] == 2
+
+
+def test_duplicate_book_false_positive_controls(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_duplicate_books_db(db_path)
+
+    dashboard = build_dashboard(db_path)
+    groups = {}
+    for book in dashboard["books"]:
+        groups.setdefault((book["title"], book["authors"]), []).append(book)
+
+    assert len(groups[("Title Clash", "Author One")]) == 1
+    assert len(groups[("Title Clash", "Author Two")]) == 1
+    assert len(groups[("Placeholder Author", "Unknown author")]) == 2
+    assert len(groups[("Language Conflict", "Careful Writer")]) == 2
+    assert len(groups[("Series Conflict", "Careful Writer")]) == 2
+    assert len(groups[("Similar Title", "Same Author")]) == 1
+    assert len(groups[("Similar Title: Subtitle", "Same Author")]) == 1
+    assert all(book["merged_count"] == 1 for books in groups.values() for book in books if book["title"] != "Merged Work")
 
 
 def test_unsupported_schema_reports_clear_error(tmp_path: Path) -> None:

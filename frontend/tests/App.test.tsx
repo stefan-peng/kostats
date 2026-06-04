@@ -31,6 +31,15 @@ const emptyDashboard = {
   recent_books: [],
 };
 
+function readBlobText(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
 function calendarFixture(days: Array<{ date: string; label: string; minutes: number; time_label: string; level: 1 | 2 | 3 | 4 }>) {
   return {
     start_date: days[0]?.date ?? null,
@@ -97,6 +106,9 @@ const populatedDashboard = {
       max_page: 80,
       total_pages: 200,
       progress: 40,
+      source_book_ids: ["1", "4"],
+      source_md5s: ["piranesi-a", "piranesi-b"],
+      merged_count: 2,
     },
     {
       id: "2",
@@ -109,6 +121,9 @@ const populatedDashboard = {
       max_page: 180,
       total_pages: 180,
       progress: 100,
+      source_book_ids: ["2"],
+      source_md5s: ["earthsea-md5"],
+      merged_count: 1,
     },
     {
       id: "3",
@@ -121,6 +136,9 @@ const populatedDashboard = {
       max_page: null,
       total_pages: null,
       progress: null,
+      source_book_ids: ["3"],
+      source_md5s: [],
+      merged_count: 1,
     },
   ],
   recent_books: [
@@ -135,6 +153,9 @@ const populatedDashboard = {
       max_page: 80,
       total_pages: 200,
       progress: 40,
+      source_book_ids: ["1", "4"],
+      source_md5s: ["piranesi-a", "piranesi-b"],
+      merged_count: 2,
     },
   ],
 };
@@ -394,6 +415,7 @@ describe("App", () => {
     expect(screen.getByText("3h 40m")).toBeInTheDocument();
     expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
     expect(screen.getByText("80 / 200")).toBeInTheDocument();
+    expect(screen.getByText("2 records")).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Search"), "le guin");
     expect(screen.getByText("1 of 3 books")).toBeInTheDocument();
@@ -557,5 +579,9 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /Export books CSV/i }));
 
     expect(clickSpy).toHaveBeenCalledTimes(2);
+    const csvBlob = vi.mocked(URL.createObjectURL).mock.calls[1][0] as Blob;
+    const csv = await readBlobText(csvBlob);
+    expect(csv).toContain("Records,Source book IDs");
+    expect(csv).toContain("2,1; 4");
   });
 });

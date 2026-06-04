@@ -589,7 +589,7 @@ table {
 }
 
 .books-table {
-  min-width: 1060px;
+  min-width: 1140px;
 }
 
 .snapshots-table {
@@ -621,31 +621,35 @@ table {
 }
 
 .books-table .book-col {
-  width: 25%;
+  width: 23%;
 }
 
 .books-table .author-col {
-  width: 17%;
+  width: 16%;
 }
 
 .books-table .time-col {
-  width: 9%;
+  width: 8%;
 }
 
 .books-table .pages-col {
-  width: 10%;
+  width: 9%;
 }
 
 .books-table .position-col {
-  width: 12%;
+  width: 11%;
 }
 
 .books-table .progress-col {
-  width: 15%;
+  width: 14%;
 }
 
 .books-table .date-col {
-  width: 12%;
+  width: 11%;
+}
+
+.books-table .records-col {
+  width: 8%;
 }
 
 .snapshots-table .imported-col {

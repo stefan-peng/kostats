@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import calendar
+import hashlib
+import re
 import sqlite3
+import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -114,6 +117,72 @@ def format_duration(seconds: float) -> str:
     return f"{minutes}m"
 
 
+PLACEHOLDER_BOOK_KEYS = {
+    "n/a",
+    "na",
+    "none",
+    "unknown",
+    "unknown author",
+    "untitled",
+}
+
+
+def display_text(value: Any, fallback: str) -> str:
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text or fallback
+
+
+def normalized_identity_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = unicodedata.normalize("NFKC", str(value))
+    text = re.sub(r"\s+", " ", text).strip().casefold()
+    return text or None
+
+
+def real_book_identity_key(value: Any) -> str | None:
+    key = normalized_identity_text(value)
+    if key is None or key in PLACEHOLDER_BOOK_KEYS:
+        return None
+    return key
+
+
+def optional_metadata_key(value: Any) -> str | None:
+    return normalized_identity_text(value)
+
+
+def book_id_sort_key(value: str) -> tuple[int, int | str]:
+    try:
+        return (0, int(value))
+    except ValueError:
+        return (1, value)
+
+
+def stable_merged_book_id(source_book_ids: list[str]) -> str:
+    key = "\x1f".join(sorted(source_book_ids, key=book_id_sort_key))
+    return f"merged:{hashlib.sha1(key.encode('utf-8')).hexdigest()[:12]}"
+
+
+class UnionFind:
+    def __init__(self, values: list[str]) -> None:
+        self.parents = {value: value for value in values}
+
+    def find(self, value: str) -> str:
+        parent = self.parents[value]
+        if parent != value:
+            self.parents[value] = self.find(parent)
+        return self.parents[value]
+
+    def union(self, first: str, second: str) -> None:
+        first_root = self.find(first)
+        second_root = self.find(second)
+        if first_root == second_root:
+            return
+        self.parents[second_root] = first_root
+
+
 def current_streak(day_keys: set[str]) -> int:
     if not day_keys:
         return 0
@@ -166,6 +235,9 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
         authors_col = pick(book_columns, ["authors", "author"], required=False)
         last_open_col = pick(book_columns, ["last_open", "last_opened", "mtime"], required=False)
         book_pages_col = pick(book_columns, ["pages", "total_pages"], required=False)
+        md5_col = pick(book_columns, ["md5"], required=False)
+        series_col = pick(book_columns, ["series"], required=False)
+        language_col = pick(book_columns, ["language"], required=False)
 
         select_parts = [
             f"d.{quote_identifier(data_book_id_col)} AS book_id",
@@ -191,6 +263,15 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
         )
         select_parts.append(
             f"b.{quote_identifier(book_pages_col)} AS book_pages" if book_pages_col else "NULL AS book_pages"
+        )
+        select_parts.append(
+            f"b.{quote_identifier(md5_col)} AS md5" if md5_col else "NULL AS md5"
+        )
+        select_parts.append(
+            f"b.{quote_identifier(series_col)} AS series" if series_col else "NULL AS series"
+        )
+        select_parts.append(
+            f"b.{quote_identifier(language_col)} AS language" if language_col else "NULL AS language"
         )
 
         rows = conn.execute(
@@ -229,8 +310,13 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
             book_id,
             {
                 "id": book_id,
-                "title": row["title"] or "Untitled",
-                "authors": row["authors"] or "Unknown author",
+                "title": display_text(row["title"], "Untitled"),
+                "authors": display_text(row["authors"], "Unknown author"),
+                "title_key": real_book_identity_key(row["title"]),
+                "authors_key": real_book_identity_key(row["authors"]),
+                "md5": display_text(row["md5"], ""),
+                "series_key": optional_metadata_key(row["series"]),
+                "language_key": optional_metadata_key(row["language"]),
                 "last_open_timestamp": 0.0,
                 "time_seconds": 0.0,
                 "pages_seen": set(),
@@ -265,35 +351,75 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
             if pages > 0:
                 book["total_pages"] = max(book["total_pages"] or 0, pages)
 
-    recent_books = []
-    for book in books.values():
-        pages_read = len(book["pages_seen"])
-        max_page = book["max_page"]
-        total_pages = book["total_pages"]
+    merger = UnionFind(list(books))
+    md5_groups: dict[str, list[str]] = defaultdict(list)
+    title_author_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+
+    for book_id, book in books.items():
+        md5 = book["md5"]
+        if md5:
+            md5_groups[md5].append(book_id)
+        if book["title_key"] and book["authors_key"]:
+            title_author_groups[(book["title_key"], book["authors_key"])].append(book_id)
+
+    for group in md5_groups.values():
+        for book_id in group[1:]:
+            merger.union(group[0], book_id)
+
+    for group in title_author_groups.values():
+        if len(group) < 2:
+            continue
+        series_keys = {books[book_id]["series_key"] for book_id in group if books[book_id]["series_key"]}
+        language_keys = {books[book_id]["language_key"] for book_id in group if books[book_id]["language_key"]}
+        if len(series_keys) > 1 or len(language_keys) > 1:
+            continue
+        for book_id in group[1:]:
+            merger.union(group[0], book_id)
+
+    work_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for book_id, book in books.items():
+        work_groups[merger.find(book_id)].append(book)
+
+    book_stats = []
+    for group in work_groups.values():
+        source_book_ids = sorted((book["id"] for book in group), key=book_id_sort_key)
+        source_md5s = sorted({book["md5"] for book in group if book["md5"]})
+        latest_book = max(group, key=lambda item: (item["last_open_timestamp"], item["id"]))
+        pages_seen = set()
+        for book in group:
+            pages_seen.update(book["pages_seen"])
+
+        pages_read = len(pages_seen)
+        max_page = latest_book["max_page"]
+        total_pages = latest_book["total_pages"]
         progress = None
         if total_pages and max_page:
             progress = min(100, round((max_page / total_pages) * 100))
         last_open = (
-            datetime.fromtimestamp(book["last_open_timestamp"]).astimezone().isoformat()
-            if book["last_open_timestamp"]
+            datetime.fromtimestamp(latest_book["last_open_timestamp"]).astimezone().isoformat()
+            if latest_book["last_open_timestamp"]
             else None
         )
-        recent_books.append(
+        time_seconds = sum(book["time_seconds"] for book in group)
+        book_stats.append(
             {
-                "id": book["id"],
-                "title": book["title"],
-                "authors": book["authors"],
+                "id": source_book_ids[0] if len(source_book_ids) == 1 else stable_merged_book_id(source_book_ids),
+                "title": latest_book["title"],
+                "authors": latest_book["authors"],
                 "last_open": last_open,
-                "time_seconds": round(book["time_seconds"], 2),
-                "time_label": format_duration(book["time_seconds"]),
+                "time_seconds": round(time_seconds, 2),
+                "time_label": format_duration(time_seconds),
                 "pages": pages_read,
                 "max_page": max_page,
                 "total_pages": total_pages,
                 "progress": progress,
+                "source_book_ids": source_book_ids,
+                "source_md5s": source_md5s,
+                "merged_count": len(source_book_ids),
             }
         )
 
-    book_stats = sorted(recent_books, key=lambda item: item["last_open"] or "", reverse=True)
+    book_stats = sorted(book_stats, key=lambda item: item["last_open"] or "", reverse=True)
     recent_books = book_stats[:20]
     top_books = sorted(book_stats, key=lambda item: item["time_seconds"], reverse=True)[:10]
 
@@ -310,8 +436,8 @@ def build_dashboard(path: Path, snapshot: SnapshotMeta | None = None) -> dict[st
             "total_time_seconds": round(total_seconds, 2),
             "total_time_label": format_duration(total_seconds),
             "reading_days": len(day_seconds),
-            "books": len(books),
-            "pages": sum(len(book["pages_seen"]) for book in books.values()),
+            "books": len(book_stats),
+            "pages": sum(book["pages"] for book in book_stats),
             "current_streak": current_streak(set(day_seconds)),
         },
         "charts": {

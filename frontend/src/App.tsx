@@ -156,6 +156,10 @@ function formatPageProgress(book: BookStats) {
   return `${book.max_page?.toLocaleString() ?? "?"} / ${book.total_pages.toLocaleString()}`;
 }
 
+function formatSourceRecords(book: BookStats) {
+  return book.merged_count === 1 ? "1 record" : `${book.merged_count} records`;
+}
+
 function matchesProgressFilter(book: BookStats, filter: BookProgressFilter) {
   if (filter === "all") return true;
   if (filter === "unknown") return book.progress == null;
@@ -497,6 +501,7 @@ function BooksView({ books }: { books: BookStats[] }) {
             <col className="position-col" />
             <col className="progress-col" />
             <col className="date-col" />
+            <col className="records-col" />
           </colgroup>
           <thead>
             <tr>
@@ -507,12 +512,13 @@ function BooksView({ books }: { books: BookStats[] }) {
               <th>Position</th>
               <th>Progress</th>
               <th>Last opened</th>
+              <th>Records</th>
             </tr>
           </thead>
           <tbody>
             {filteredBooks.length === 0 ? (
               <tr>
-                <td colSpan={7} className="empty-row">
+                <td colSpan={8} className="empty-row">
                   No books match the current filters.
                 </td>
               </tr>
@@ -538,6 +544,9 @@ function BooksView({ books }: { books: BookStats[] }) {
                   </td>
                   <td title={formatDateTime(book.last_open)}>
                     <span className="cell-truncate">{formatDateTime(book.last_open)}</span>
+                  </td>
+                  <td title={`Book IDs: ${book.source_book_ids.join(", ")}`}>
+                    {formatSourceRecords(book)}
                   </td>
                 </tr>
               ))
@@ -777,7 +786,7 @@ function ExportView({ dashboard }: { dashboard: Dashboard }) {
   }
 
   function exportBooksCsv() {
-    const header = ["Title", "Author", "Last opened", "Time", "Pages seen", "Position", "Progress"];
+    const header = ["Title", "Author", "Last opened", "Time", "Pages seen", "Position", "Progress", "Records", "Source book IDs"];
     const rows = dashboard.books.map((book) => [
       book.title,
       book.authors,
@@ -786,6 +795,8 @@ function ExportView({ dashboard }: { dashboard: Dashboard }) {
       book.pages,
       formatPageProgress(book),
       formatProgress(book),
+      book.merged_count,
+      book.source_book_ids.join("; "),
     ]);
     const csv = [header, ...rows].map((row) => row.map(escapeCsv).join(",")).join("\n");
     downloadText("kostats-books.csv", `${csv}\n`, "text/csv");

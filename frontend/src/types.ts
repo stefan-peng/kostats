@@ -45,6 +45,9 @@ export type BookStats = {
   max_page: number | null;
   total_pages: number | null;
   progress: number | null;
+  source_book_ids: string[];
+  source_md5s: string[];
+  merged_count: number;
 };
 
 export type Dashboard = {
