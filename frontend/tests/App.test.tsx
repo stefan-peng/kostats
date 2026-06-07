@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
 
 const emptyDashboard = {
@@ -51,6 +51,7 @@ function calendarFixture(days: Array<{ date: string; label: string; minutes: num
 }
 
 const fullCalendar = calendarFixture([
+  { date: "2024-01-01", label: "Jan 1, 2024", minutes: 900, time_label: "15h", level: 4 },
   { date: "2026-04-20", label: "Apr 20, 2026", minutes: 15, time_label: "15m", level: 1 },
   { date: "2026-04-21", label: "Apr 21, 2026", minutes: 20, time_label: "20m", level: 1 },
   { date: "2026-04-22", label: "Apr 22, 2026", minutes: 25, time_label: "25m", level: 2 },
@@ -242,6 +243,15 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 5, 7, 12));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("shows empty state before the first import", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
@@ -447,9 +457,14 @@ describe("App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Calendar/i }));
     expect(screen.getByRole("heading", { name: "Calendar" })).toBeInTheDocument();
+    expect(screen.getAllByRole("gridcell")).toHaveLength(365);
+    expect(screen.getByLabelText(/Sunday, June 8, 2025: no reading/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Monday, April 20, 2026: 15m read, intensity 1 of 4/)).toBeInTheDocument();
     expect(screen.getByLabelText(/Monday, May 4, 2026: 1h 30m read, intensity 4 of 4/)).toBeInTheDocument();
-    expect(within(screen.getByLabelText("Calendar summary")).getByText("15")).toBeInTheDocument();
+    const calendarSummary = within(screen.getByLabelText("Calendar summary"));
+    expect(calendarSummary.getByText("15")).toBeInTheDocument();
+    expect(calendarSummary.getByText("1h 30m")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Monday, January 1, 2024/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /Settings/i }));
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
@@ -520,6 +535,78 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
 
     expect(document.querySelector("main")).toHaveStyle({ alignContent: "start" });
+  });
+
+  it("renders a trailing-year grid when there are no reading days", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [] };
+      return emptyDashboard;
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+
+    const heatmap = screen.getByLabelText("Scrollable reading calendar heatmap");
+    expect(within(heatmap).getAllByRole("gridcell")).toHaveLength(365);
+    expect(screen.getByLabelText(/Sunday, June 8, 2025: no reading/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Sunday, June 7, 2026: no reading/)).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Calendar summary")).getByText("0")).toBeInTheDocument();
+    expect(screen.queryByText("No reading days yet")).not.toBeInTheDocument();
+  });
+
+  it("opens an overflowing calendar at the current week without resetting after polling", async () => {
+    vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("calendar-scroll") ? 828 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("calendar-scroll") ? 340 : 0;
+    });
+    let dashboardRequests = 0;
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      dashboardRequests += 1;
+      return {
+        ...populatedDashboard,
+        charts: {
+          ...populatedDashboard.charts,
+          calendar: { ...populatedDashboard.charts.calendar },
+        },
+      };
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+
+    const heatmap = screen.getByLabelText("Scrollable reading calendar heatmap");
+    expect(heatmap).toHaveProperty("scrollLeft", 488);
+
+    heatmap.scrollLeft = 120;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000);
+    });
+
+    expect(dashboardRequests).toBeGreaterThan(1);
+    expect(heatmap).toHaveProperty("scrollLeft", 120);
   });
 
   it("keeps latest import metadata separate from the selected snapshot", async () => {

@@ -809,6 +809,12 @@ td {
   min-width: 0;
 }
 
+.calendar-panel {
+  justify-self: start;
+  width: 100%;
+  max-width: 1050px;
+}
+
 .calendar-panel header,
 .settings-panel header {
   display: flex;
@@ -925,10 +931,6 @@ td {
 .calendar-day.level-4 {
   background: var(--heatmap-4);
   border-color: color-mix(in srgb, var(--heatmap-4) 72%, var(--line));
-}
-
-.calendar-day.outside-range {
-  opacity: 0.38;
 }
 
 .calendar-legend {

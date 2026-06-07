@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   autoImportFromKobo,
@@ -49,7 +49,6 @@ type CalendarDay = Dashboard["charts"]["calendar"]["days"][number];
 type CalendarCell = {
   date: string;
   day: CalendarDay | null;
-  outsideRange: boolean;
 };
 
 function formatDateTime(value: string | null | undefined) {
@@ -81,6 +80,15 @@ function addDays(date: Date, count: number) {
   return next;
 }
 
+function calendarLevel(minutes: number, maxMinutes: number): CalendarDay["level"] {
+  if (minutes <= 0 || maxMinutes <= 0) return 0;
+  const ratio = minutes / maxMinutes;
+  if (ratio <= 0.25) return 1;
+  if (ratio <= 0.5) return 2;
+  if (ratio <= 0.75) return 3;
+  return 4;
+}
+
 function formatMinutes(minutes: number) {
   if (minutes < 60) return `${Math.round(minutes)} min`;
   const hours = Math.floor(minutes / 60);
@@ -97,23 +105,28 @@ function formatDurationLabel(seconds: number) {
 }
 
 function buildCalendarCells(calendar: Dashboard["charts"]["calendar"]) {
-  if (!calendar.start_date || !calendar.end_date || calendar.days.length === 0) {
-    return { cells: [] as CalendarCell[], weeks: 0, monthLabels: [] as Array<{ week: number; label: string }> };
-  }
-
-  const dayMap = new Map(calendar.days.map((day) => [day.date, day]));
-  const firstReadingDay = parseCalendarDate(calendar.start_date);
-  const lastReadingDay = parseCalendarDate(calendar.end_date);
-  const start = addDays(firstReadingDay, -firstReadingDay.getDay());
-  const end = addDays(lastReadingDay, 6 - lastReadingDay.getDay());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentWeekStart = addDays(today, -today.getDay());
+  const start = addDays(currentWeekStart, -52 * 7);
+  const visibleDays = calendar.days.filter((day) => {
+    const date = parseCalendarDate(day.date);
+    return date >= start && date <= today;
+  });
+  const maxMinutes = Math.max(0, ...visibleDays.map((day) => day.minutes));
+  const dayMap = new Map(
+    visibleDays.map((day) => [
+      day.date,
+      { ...day, level: calendarLevel(day.minutes, maxMinutes) },
+    ]),
+  );
   const cells: CalendarCell[] = [];
 
-  for (let date = start; date <= end; date = addDays(date, 1)) {
+  for (let date = start; date <= today; date = addDays(date, 1)) {
     const key = formatCalendarDate(date);
     cells.push({
       date: key,
       day: dayMap.get(key) ?? null,
-      outsideRange: date < firstReadingDay || date > lastReadingDay,
     });
   }
 
@@ -122,10 +135,10 @@ function buildCalendarCells(calendar: Dashboard["charts"]["calendar"]) {
   let lastMonth = "";
   for (let week = 0; week < weeks; week += 1) {
     const weekCells = cells.slice(week * 7, week * 7 + 7);
-    const monthCell = weekCells.find((cell) => week === 0 && !cell.outsideRange) ?? weekCells.find((cell) => {
-      const day = parseCalendarDate(cell.date).getDate();
-      return day <= 7 && !cell.outsideRange;
-    });
+    const monthCell =
+      week === 0
+        ? weekCells[0]
+        : weekCells.find((cell) => parseCalendarDate(cell.date).getDate() <= 7);
     if (!monthCell) continue;
     const monthKey = monthCell.date.slice(0, 7);
     if (monthKey === lastMonth) continue;
@@ -136,7 +149,15 @@ function buildCalendarCells(calendar: Dashboard["charts"]["calendar"]) {
     });
   }
 
-  return { cells, weeks, monthLabels };
+  return {
+    cells,
+    weeks,
+    monthLabels,
+    startDate: formatCalendarDate(start),
+    endDate: formatCalendarDate(today),
+    totalDays: visibleDays.length,
+    maxMinutes,
+  };
 }
 
 function formatBytes(bytes: number) {
@@ -674,20 +695,26 @@ function SnapshotsView({
 }
 
 function CalendarView({ calendar }: { calendar: Dashboard["charts"]["calendar"] }) {
-  const { cells, weeks, monthLabels } = useMemo(() => buildCalendarCells(calendar), [calendar]);
-  const dateRange =
-    calendar.start_date && calendar.end_date
-      ? `${parseCalendarDate(calendar.start_date).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })} - ${parseCalendarDate(calendar.end_date).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })}`
-      : "No reading history";
-  const peakLabel = calendar.max_minutes > 0 ? formatMinutes(calendar.max_minutes) : "0 min";
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { cells, weeks, monthLabels, startDate, endDate, totalDays, maxMinutes } = useMemo(
+    () => buildCalendarCells(calendar),
+    [calendar],
+  );
+  const dateRange = `${parseCalendarDate(startDate).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })} - ${parseCalendarDate(endDate).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+  const peakLabel = maxMinutes > 0 ? formatMinutes(maxMinutes) : "0 min";
+
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
+    if (scroll) scroll.scrollLeft = scroll.scrollWidth - scroll.clientWidth;
+  }, [endDate, startDate]);
 
   return (
     <section className="calendar-panel">
@@ -698,76 +725,77 @@ function CalendarView({ calendar }: { calendar: Dashboard["charts"]["calendar"] 
         </div>
         <div className="calendar-summary" aria-label="Calendar summary">
           <span>
-            <strong>{calendar.total_days.toLocaleString()}</strong> days
+            <strong>{totalDays.toLocaleString()}</strong> days
           </span>
           <span>
             <strong>{peakLabel}</strong> peak
           </span>
         </div>
       </header>
-      {calendar.days.length === 0 ? (
-        <div className="empty-chart">No reading days yet</div>
-      ) : (
-        <div className="calendar-scroll" tabIndex={0} aria-label="Scrollable reading calendar heatmap">
-          <div
-            className="calendar-heatmap"
-            style={{ "--calendar-weeks": weeks } as CSSProperties}
-          >
-            <div className="calendar-months" aria-hidden="true">
-              {monthLabels.map((month, index) => {
-                const nextWeek = monthLabels[index + 1]?.week ?? weeks;
-                const span = Math.max(1, Math.min(4, nextWeek - month.week));
+      <div
+        ref={scrollRef}
+        className="calendar-scroll"
+        tabIndex={0}
+        aria-label="Scrollable reading calendar heatmap"
+      >
+        <div
+          className="calendar-heatmap"
+          style={{ "--calendar-weeks": weeks } as CSSProperties}
+        >
+          <div className="calendar-months" aria-hidden="true">
+            {monthLabels.map((month, index) => {
+              const nextWeek = monthLabels[index + 1]?.week ?? weeks;
+              const span = Math.max(1, Math.min(4, nextWeek - month.week));
+              return (
+                <span
+                  key={`${month.week}-${month.label}`}
+                  style={{ gridColumn: `${month.week + 1} / span ${span}` }}
+                >
+                  {month.label}
+                </span>
+              );
+            })}
+          </div>
+          <div className="calendar-body">
+            <div className="calendar-weekdays" aria-hidden="true">
+              {weekdayLabels.map((day) => (
+                <span key={day}>{day === "Mon" || day === "Wed" || day === "Fri" ? day : ""}</span>
+              ))}
+            </div>
+            <div className="calendar-days" role="grid" aria-label="Reading days by week">
+              {cells.map((cell) => {
+                const date = parseCalendarDate(cell.date);
+                const label = date.toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
+                });
+                const day = cell.day;
+                const cellLabel = day
+                  ? `${label}: ${day.time_label} read, intensity ${day.level} of 4`
+                  : `${label}: no reading`;
                 return (
                   <span
-                    key={`${month.week}-${month.label}`}
-                    style={{ gridColumn: `${month.week + 1} / span ${span}` }}
-                  >
-                    {month.label}
-                  </span>
+                    key={cell.date}
+                    role="gridcell"
+                    aria-label={cellLabel}
+                    title={cellLabel}
+                    className={`calendar-day level-${day?.level ?? 0}`}
+                  />
                 );
               })}
             </div>
-            <div className="calendar-body">
-              <div className="calendar-weekdays" aria-hidden="true">
-                {weekdayLabels.map((day) => (
-                  <span key={day}>{day === "Mon" || day === "Wed" || day === "Fri" ? day : ""}</span>
-                ))}
-              </div>
-              <div className="calendar-days" role="grid" aria-label="Reading days by week">
-                {cells.map((cell) => {
-                  const date = parseCalendarDate(cell.date);
-                  const label = date.toLocaleDateString(undefined, {
-                    weekday: "long",
-                    month: "long",
-                    day: "numeric",
-                    year: "numeric",
-                  });
-                  const day = cell.day;
-                  const cellLabel = day
-                    ? `${label}: ${day.time_label} read, intensity ${day.level} of 4`
-                    : `${label}: no reading`;
-                  return (
-                    <span
-                      key={cell.date}
-                      role="gridcell"
-                      aria-label={cellLabel}
-                      title={cellLabel}
-                      className={`calendar-day level-${day?.level ?? 0}${cell.outsideRange ? " outside-range" : ""}`}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-            <div className="calendar-legend" aria-label="Reading intensity legend">
-              <span>Less</span>
-              {[0, 1, 2, 3, 4].map((level) => (
-                <i key={level} className={`calendar-day level-${level}`} />
-              ))}
-              <span>More</span>
-            </div>
+          </div>
+          <div className="calendar-legend" aria-label="Reading intensity legend">
+            <span>Less</span>
+            {[0, 1, 2, 3, 4].map((level) => (
+              <i key={level} className={`calendar-day level-${level}`} />
+            ))}
+            <span>More</span>
           </div>
         </div>
-      )}
+      </div>
     </section>
   );
 }
