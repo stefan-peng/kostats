@@ -483,6 +483,54 @@ dd {
   border-radius: 2px 2px 0 0;
 }
 
+.chart-bar-target {
+  position: relative;
+  cursor: default;
+  outline: none;
+}
+
+.chart-bar-target:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-line);
+}
+
+.chart-tooltip {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  max-width: min(220px, calc(100vw - 16px));
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--ink);
+  color: var(--panel);
+  box-shadow: var(--shadow);
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  pointer-events: none;
+}
+
+.chart-tooltip::after {
+  content: "";
+  position: absolute;
+  top: var(--tooltip-arrow-edge);
+  bottom: var(--tooltip-arrow-bottom);
+  left: var(--tooltip-arrow-left);
+  border: 5px solid transparent;
+  border-top-color: var(--tooltip-arrow-color);
+  border-bottom-color: var(--tooltip-arrow-bottom-color);
+  transform: translateX(-50%);
+}
+
+.chart-tooltip strong {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .bar-column small {
   display: block;
   visibility: hidden;
@@ -512,7 +560,7 @@ dd {
   min-width: 0;
 }
 
-.top-book-row span {
+.top-book-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -523,10 +571,17 @@ dd {
   height: 8px;
   border-radius: 999px;
   background: var(--track-bg);
+}
+
+.track {
+  overflow: visible;
+}
+
+.progress-cell span {
   overflow: hidden;
 }
 
-.track b,
+.track-fill,
 .progress-cell b {
   display: block;
   height: 100%;

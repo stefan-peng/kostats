@@ -297,6 +297,73 @@ describe("App", () => {
     expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
   });
 
+  it("shows dashboard bar values on hover and keyboard focus", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+
+    const dailyBar = await screen.findByLabelText("May 30: 1h 30m");
+    await userEvent.hover(dailyBar);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("May 301h 30m");
+    await userEvent.unhover(dailyBar);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    const monthlyBar = screen.getByLabelText("May 26: 1h 30m");
+    act(() => monthlyBar.focus());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("May 261h 30m");
+    act(() => monthlyBar.blur());
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    const topBookBar = screen.getByLabelText("Piranesi: 1h 30m");
+    await userEvent.hover(topBookBar);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Piranesi1h 30m");
+  });
+
+  it("shows calendar heatmap values on hover", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+
+    const readingDay = screen.getByLabelText(
+      "Monday, May 4, 2026: 1h 30m read, intensity 4 of 4",
+    );
+    await userEvent.hover(readingDay);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Monday, May 4, 20261h 30m read");
+    await userEvent.unhover(readingDay);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+
+    const emptyDay = screen.getByLabelText("Sunday, June 7, 2026: no reading");
+    await userEvent.hover(emptyDay);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Sunday, June 7, 2026No reading");
+  });
+
   it("shows manual fallback when Kobo import fails", async () => {
     const mountedStatus = {
       mount_path: "/Volumes/KOBOeReader",

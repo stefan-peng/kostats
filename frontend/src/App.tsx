@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   autoImportFromKobo,
   getDashboard,
@@ -298,14 +299,127 @@ function MetricCard({ label, value }: { label: string; value: string | number })
   );
 }
 
+function TooltipTarget({
+  label,
+  valueLabel,
+  className,
+  style,
+  children,
+  role,
+  ariaLabel,
+  tabIndex = 0,
+}: {
+  label: string;
+  valueLabel: string;
+  className: string;
+  style?: CSSProperties;
+  children?: ReactNode;
+  role?: string;
+  ariaLabel?: string;
+  tabIndex?: number;
+}) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties>({});
+  const tooltipId = useId();
+  const targetRef = useRef<HTMLSpanElement>(null);
+  const tooltipRef = useRef<HTMLSpanElement>(null);
+  const accessibleLabel = ariaLabel ?? `${label}: ${valueLabel}`;
+
+  useLayoutEffect(() => {
+    if (!showTooltip) return;
+
+    function positionTooltip() {
+      const target = targetRef.current;
+      const tooltip = tooltipRef.current;
+      if (!target || !tooltip) return;
+
+      const targetRect = target.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const viewportPadding = 8;
+      const gap = 8;
+      const centeredLeft = targetRect.left + targetRect.width / 2 - tooltipRect.width / 2;
+      const left = Math.min(
+        window.innerWidth - tooltipRect.width - viewportPadding,
+        Math.max(viewportPadding, centeredLeft),
+      );
+      const aboveTop = targetRect.top - tooltipRect.height - gap;
+      const top =
+        aboveTop >= viewportPadding
+          ? aboveTop
+          : Math.min(
+              window.innerHeight - tooltipRect.height - viewportPadding,
+              targetRect.bottom + gap,
+            );
+      const arrowLeft = Math.min(
+        tooltipRect.width - viewportPadding,
+        Math.max(viewportPadding, targetRect.left + targetRect.width / 2 - left),
+      );
+
+      setTooltipStyle({
+        left,
+        top,
+        "--tooltip-arrow-left": `${arrowLeft}px`,
+        "--tooltip-arrow-edge": aboveTop >= viewportPadding ? "100%" : "auto",
+        "--tooltip-arrow-bottom": aboveTop >= viewportPadding ? "auto" : "100%",
+        "--tooltip-arrow-color": aboveTop >= viewportPadding ? "var(--ink)" : "transparent",
+        "--tooltip-arrow-bottom-color":
+          aboveTop >= viewportPadding ? "transparent" : "var(--ink)",
+      } as CSSProperties);
+    }
+
+    positionTooltip();
+    window.addEventListener("resize", positionTooltip);
+    window.addEventListener("scroll", positionTooltip, true);
+    return () => {
+      window.removeEventListener("resize", positionTooltip);
+      window.removeEventListener("scroll", positionTooltip, true);
+    };
+  }, [showTooltip]);
+
+  return (
+    <span
+      ref={targetRef}
+      className={`${className} chart-bar-target`}
+      style={style}
+      tabIndex={tabIndex}
+      role={role}
+      aria-label={accessibleLabel}
+      aria-describedby={showTooltip ? tooltipId : undefined}
+      onMouseEnter={() => setShowTooltip(true)}
+      onMouseLeave={() => setShowTooltip(false)}
+      onFocus={() => setShowTooltip(true)}
+      onBlur={() => setShowTooltip(false)}
+    >
+      {children}
+      {showTooltip
+        ? createPortal(
+            <span
+              ref={tooltipRef}
+              className="chart-tooltip"
+              id={tooltipId}
+              role="tooltip"
+              style={tooltipStyle}
+            >
+              <span>{label}</span>
+              <strong>{valueLabel}</strong>
+            </span>,
+            document.body,
+          )
+        : null}
+    </span>
+  );
+}
+
 function VerticalBars({
   title,
   data,
   valueKey,
+  formatValue,
 }: {
   title: string;
   data: Array<Record<string, string | number>>;
   valueKey: string;
+  formatValue: (value: number) => string;
 }) {
   const max = Math.max(1, ...data.map((item) => Number(item[valueKey])));
   return (
@@ -317,16 +431,21 @@ function VerticalBars({
         <div className="empty-chart">No reading data yet</div>
       ) : (
         <div className="bar-chart" role="img" aria-label={`${title} chart`}>
-          {data.map((item) => (
-            <div className="bar-column" key={String(item.label)}>
-              <span
-                className="bar"
-                style={{ height: `${Math.max(4, (Number(item[valueKey]) / max) * 100)}%` }}
-                title={`${item.label}: ${item[valueKey]}`}
-              />
-              <small>{item.label}</small>
-            </div>
-          ))}
+          {data.map((item) => {
+            const value = Number(item[valueKey]);
+            const label = String(item.label);
+            return (
+              <div className="bar-column" key={label}>
+                <TooltipTarget
+                  label={label}
+                  valueLabel={formatValue(value)}
+                  className="bar"
+                  style={{ height: `${Math.max(4, (value / max) * 100)}%` }}
+                />
+                <small>{label}</small>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
@@ -346,10 +465,17 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
         <div className="top-books-list">
           {data.map((item) => (
             <div className="top-book-row" key={item.id}>
-              <span>{item.title}</span>
-              <div className="track">
-                <b style={{ width: `${(item.hours / max) * 100}%` }} />
-              </div>
+              <span className="top-book-title">{item.title}</span>
+              <TooltipTarget
+                label={item.title}
+                valueLabel={formatDurationLabel(item.hours * 3600)}
+                className="track"
+              >
+                <span
+                  className="track-fill"
+                  style={{ width: `${(item.hours / max) * 100}%` }}
+                />
+              </TooltipTarget>
               <em>{item.hours.toFixed(1)}h</em>
             </div>
           ))}
@@ -606,11 +732,13 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
           title="Daily reading"
           data={dashboard.charts.daily}
           valueKey="minutes"
+          formatValue={(minutes) => formatDurationLabel(minutes * 60)}
         />
         <VerticalBars
           title="Monthly reading"
           data={dashboard.charts.monthly}
           valueKey="hours"
+          formatValue={(hours) => formatDurationLabel(hours * 3600)}
         />
         <TopBooksChart data={dashboard.charts.top_books} />
       </section>
@@ -776,11 +904,13 @@ function CalendarView({ calendar }: { calendar: Dashboard["charts"]["calendar"] 
                   ? `${label}: ${day.time_label} read, intensity ${day.level} of 4`
                   : `${label}: no reading`;
                 return (
-                  <span
+                  <TooltipTarget
                     key={cell.date}
                     role="gridcell"
-                    aria-label={cellLabel}
-                    title={cellLabel}
+                    label={label}
+                    valueLabel={day ? `${day.time_label} read` : "No reading"}
+                    ariaLabel={cellLabel}
+                    tabIndex={-1}
                     className={`calendar-day level-${day?.level ?? 0}`}
                   />
                 );
