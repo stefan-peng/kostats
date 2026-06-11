@@ -6,9 +6,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
+from .backups import RecoveryBackupStore
 from .device import auto_import_from_kobo, device_status, import_from_kobo
-from .errors import ImportError, UnsupportedSchemaError
+from .errors import BackupError, ImportError, UnsupportedSchemaError
 from .sqlite_stats import SnapshotMeta, build_dashboard
 from .storage import SnapshotStore
 
@@ -25,6 +27,15 @@ app.add_middleware(
 
 def store() -> SnapshotStore:
     return SnapshotStore()
+
+
+def backup_store() -> RecoveryBackupStore:
+    return RecoveryBackupStore(store().root)
+
+
+class RestoreRequest(BaseModel):
+    confirmed: bool = False
+    restore_optional_extensions: bool = False
 
 
 @app.get("/api/device/status")
@@ -93,6 +104,44 @@ async def post_import_upload(file: UploadFile = File(...)) -> dict:
 @app.get("/api/snapshots")
 def get_snapshots() -> dict:
     return {"snapshots": store().list_snapshots()}
+
+
+@app.get("/api/backups")
+def get_backups() -> dict:
+    try:
+        return {"backups": backup_store().list_backups()}
+    except BackupError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/backups/kobo")
+def post_backup_kobo() -> dict:
+    try:
+        return backup_store().create_from_kobo()
+    except BackupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/backups/{backup_id}/restore-preview")
+def get_restore_preview(backup_id: str) -> dict:
+    try:
+        return backup_store().restore_preview(backup_id)
+    except BackupError as exc:
+        status_code = 404 if "not found" in str(exc).lower() else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@app.post("/api/backups/{backup_id}/restore")
+def post_restore_backup(backup_id: str, request: RestoreRequest) -> dict:
+    try:
+        return backup_store().restore(
+            backup_id,
+            confirmed=request.confirmed,
+            restore_extensions=request.restore_optional_extensions,
+        )
+    except BackupError as exc:
+        status_code = 404 if "not found" in str(exc).lower() else 409
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 @app.get("/api/dashboard")

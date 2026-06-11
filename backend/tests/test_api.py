@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from backend.app.backups import partial_md5
 from backend.app.main import app
 
 
@@ -100,3 +101,58 @@ def test_auto_kobo_import_endpoint_skips_unchanged_database(monkeypatch, tmp_pat
     assert second.json()["imported"] is False
     assert second.json()["reason"] == "unchanged"
     assert len(client.get("/api/snapshots").json()["snapshots"]) == 1
+
+
+def test_recovery_backup_preview_and_restore_endpoints(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    volume = tmp_path / "KOBOeReader"
+    koreader = volume / ".adds/koreader"
+    settings = koreader / "settings"
+    settings.mkdir(parents=True)
+    create_api_fixture(settings / "statistics.sqlite3")
+    create_api_fixture(settings / "vocabulary_builder.sqlite3")
+    (koreader / "settings.reader.lua").write_text(
+        'return { ["document_metadata_folder"] = "doc" }\n',
+        encoding="utf-8",
+    )
+    book = volume / "Books/Kindred.epub"
+    book.parent.mkdir()
+    book.write_bytes(b"x" * 2048 + b"kindred")
+    sidecar = volume / "Books/Kindred.sdr/metadata.epub.lua"
+    sidecar.parent.mkdir()
+    sidecar.write_text(
+        f"""
+        return {{
+            ["doc_path"] = "/mnt/onboard/Books/Kindred.epub",
+            ["partial_md5_checksum"] = "{partial_md5(book)}",
+            ["doc_props"] = {{ ["title"] = "Kindred", ["authors"] = "Octavia Butler" }},
+        }}
+        """,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    monkeypatch.setenv("KOSTATS_KOBO_VOLUME", str(volume))
+    client = TestClient(app)
+
+    created = client.post("/api/backups/kobo")
+    assert created.status_code == 200
+    backup_id = created.json()["backup"]["id"]
+    assert client.get("/api/backups").json()["backups"][0]["id"] == backup_id
+
+    preview = client.get(f"/api/backups/{backup_id}/restore-preview")
+    assert preview.status_code == 200
+    assert len(preview.json()["exact_matches"]) == 1
+
+    unconfirmed = client.post(
+        f"/api/backups/{backup_id}/restore",
+        json={"confirmed": False, "restore_optional_extensions": False},
+    )
+    assert unconfirmed.status_code == 409
+
+    restored = client.post(
+        f"/api/backups/{backup_id}/restore",
+        json={"confirmed": True, "restore_optional_extensions": False},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["restored"]["sidecars"] == 1
+    assert restored.json()["safety_backup_id"]

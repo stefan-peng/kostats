@@ -1,4 +1,12 @@
-import type { AutoImportResult, Dashboard, DeviceStatus, Snapshot } from "./types";
+import type {
+  AutoImportResult,
+  Dashboard,
+  DeviceStatus,
+  RecoveryBackup,
+  RestorePreview,
+  RestoreResult,
+  Snapshot,
+} from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -19,6 +27,36 @@ export function getDashboard(snapshotId = "latest"): Promise<Dashboard> {
 
 export function getSnapshots(): Promise<{ snapshots: Snapshot[] }> {
   return request<{ snapshots: Snapshot[] }>("/api/snapshots");
+}
+
+export function getBackups(): Promise<{ backups: RecoveryBackup[] }> {
+  return request<{ backups: RecoveryBackup[] }>("/api/backups");
+}
+
+export function createKoboBackup(): Promise<{ created: boolean; backup: RecoveryBackup }> {
+  return request<{ created: boolean; backup: RecoveryBackup }>("/api/backups/kobo", {
+    method: "POST",
+  });
+}
+
+export function getRestorePreview(backupId: string): Promise<RestorePreview> {
+  return request<RestorePreview>(
+    `/api/backups/${encodeURIComponent(backupId)}/restore-preview`,
+  );
+}
+
+export function restoreBackup(
+  backupId: string,
+  restoreOptionalExtensions: boolean,
+): Promise<RestoreResult> {
+  return request<RestoreResult>(`/api/backups/${encodeURIComponent(backupId)}/restore`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      confirmed: true,
+      restore_optional_extensions: restoreOptionalExtensions,
+    }),
+  });
 }
 
 export function importFromKobo(): Promise<{ snapshot: Snapshot; dashboard: Dashboard }> {

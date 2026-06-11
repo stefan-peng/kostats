@@ -37,6 +37,67 @@ export type AutoImportResult = {
   dashboard?: Dashboard;
 };
 
+export type RecoveryBackup = {
+  id: string;
+  created_at: string;
+  source: string;
+  source_mount: string;
+  archive_path: string;
+  archive_size: number;
+  content_hash: string;
+  koreader_version: string | null;
+  device_model: string | null;
+  document_metadata_folder: "doc" | "dir" | "hash";
+  credentials_included: boolean;
+  counts: Record<string, number>;
+};
+
+export type RestoreMatch = {
+  source_path: string | null;
+  old_doc_path: string | null;
+  new_doc_path?: string;
+  new_path?: string;
+  title: string | null;
+  authors: string | null;
+  partial_md5_checksum: string | null;
+  candidates?: Array<{
+    path: string;
+    doc_path: string;
+    partial_md5_checksum: string;
+    title: string;
+    authors: string | null;
+  }>;
+  fallback_candidates?: Array<{
+    path: string;
+    doc_path: string;
+    partial_md5_checksum: string;
+    title: string;
+    authors: string | null;
+  }>;
+};
+
+export type RestorePreview = {
+  backup: RecoveryBackup;
+  device: DeviceStatus;
+  current_koreader_version: string | null;
+  version_warning: boolean;
+  required_bytes: number;
+  available_bytes: number;
+  counts: Record<string, number>;
+  exact_matches: RestoreMatch[];
+  missing_matches: RestoreMatch[];
+  ambiguous_matches: RestoreMatch[];
+  book_count: number;
+};
+
+export type RestoreResult = {
+  restored: Record<string, number>;
+  skipped: Record<string, number>;
+  failed: Array<{ path: string; error: string }>;
+  safety_backup_id: string;
+  restart_required: boolean;
+};
+
 export type BookStats = {
   id: string;
   title: string;

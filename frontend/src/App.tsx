@@ -3,15 +3,27 @@ import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   autoImportFromKobo,
+  createKoboBackup,
+  getBackups,
   getDashboard,
   getDeviceStatus,
+  getRestorePreview,
   getSnapshots,
   importFromKobo,
+  restoreBackup,
   uploadDatabase,
 } from "./api";
-import type { BookStats, Dashboard, DeviceStatus, Snapshot } from "./types";
+import type {
+  BookStats,
+  Dashboard,
+  DeviceStatus,
+  RecoveryBackup,
+  RestorePreview,
+  RestoreResult,
+  Snapshot,
+} from "./types";
 
-type View = "dashboard" | "snapshots" | "books" | "calendar" | "export" | "settings";
+type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "export" | "settings";
 type BookSortKey = "last_open" | "time_seconds" | "pages" | "progress" | "title";
 type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
 
@@ -863,6 +875,210 @@ function SnapshotsView({
   );
 }
 
+function countLabel(value: number, singular: string, plural = `${singular}s`) {
+  return `${value.toLocaleString()} ${value === 1 ? singular : plural}`;
+}
+
+function BackupCounts({ counts }: { counts: Record<string, number> }) {
+  const labels = [
+    ["sidecars", "sidecar files"],
+    ["settings", "settings files"],
+    ["databases", "databases"],
+    ["dictionaries", "dictionary files"],
+    ["extensions", "extension files"],
+  ] as const;
+  return (
+    <div className="backup-counts">
+      {labels.map(([key, label]) => (
+        <span key={key}>
+          <strong>{counts[key] ?? 0}</strong> {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function BackupsView({
+  backups,
+  device,
+  busy,
+  onCreate,
+  onPreview,
+  onRestore,
+}: {
+  backups: RecoveryBackup[];
+  device: DeviceStatus | null;
+  busy: boolean;
+  onCreate: () => Promise<void>;
+  onPreview: (id: string) => Promise<RestorePreview>;
+  onRestore: (id: string, extensions: boolean) => Promise<RestoreResult>;
+}) {
+  const [preview, setPreview] = useState<RestorePreview | null>(null);
+  const [result, setResult] = useState<RestoreResult | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [restoreExtensions, setRestoreExtensions] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+
+  async function previewBackup(id: string) {
+    setLoadingPreview(true);
+    setLocalError(null);
+    setResult(null);
+    setConfirmed(false);
+    setRestoreExtensions(false);
+    try {
+      setPreview(await onPreview(id));
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "Could not preview recovery backup");
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
+  async function runRestore() {
+    if (!preview || !confirmed) return;
+    setLocalError(null);
+    try {
+      const nextResult = await onRestore(preview.backup.id, restoreExtensions);
+      setResult(nextResult);
+      setPreview(null);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "Could not restore recovery backup");
+    }
+  }
+
+  return (
+    <section className="backups-panel">
+      <header>
+        <div>
+          <h3>Recovery backups</h3>
+          <span className="panel-note">Books are excluded. Credentials may be included.</span>
+        </div>
+        <button
+          className="primary"
+          disabled={busy || !device?.mounted}
+          onClick={() => onCreate().catch((err: Error) => setLocalError(err.message))}
+        >
+          {busy ? "Working..." : "Back up now"}
+        </button>
+      </header>
+
+      {localError ? <div className="alert error">{localError}</div> : null}
+      {result ? (
+        <div className="restore-result">
+          <h4>Restore complete</h4>
+          <p>
+            Restored {countLabel(result.restored.sidecars ?? 0, "sidecar")}; skipped{" "}
+            {countLabel(result.skipped.sidecars ?? 0, "sidecar")}; failed{" "}
+            {countLabel(result.failed.length, "item")}.
+          </p>
+          <p>
+            Safety backup: <code>{result.safety_backup_id}</code>. Eject the Kobo and restart KOReader.
+          </p>
+        </div>
+      ) : null}
+
+      <div className="backup-list">
+        {backups.length === 0 ? (
+          <div className="empty-row">No recovery backups have been created yet.</div>
+        ) : (
+          backups.map((backup) => (
+            <article className="backup-card" key={backup.id}>
+              <div className="backup-card-main">
+                <div>
+                  <strong>{formatDateTime(backup.created_at)}</strong>
+                  <span>
+                    {backup.koreader_version ?? "Unknown KOReader version"} ·{" "}
+                    {backup.device_model ?? "Unknown device"} · {formatBytes(backup.archive_size)}
+                  </span>
+                  <code>{backup.source_mount}</code>
+                </div>
+                {backup.credentials_included ? (
+                  <span className="credential-warning">Contains credentials</span>
+                ) : null}
+              </div>
+              <BackupCounts counts={backup.counts} />
+              <button
+                className="table-action"
+                disabled={busy || loadingPreview || !device?.mounted}
+                onClick={() => previewBackup(backup.id)}
+              >
+                {loadingPreview ? "Scanning..." : "Restore"}
+              </button>
+            </article>
+          ))
+        )}
+      </div>
+
+      {preview ? (
+        <div className="restore-preview" role="dialog" aria-label="Restore preview">
+          <header>
+            <div>
+              <h4>Restore preview</h4>
+              <span className="panel-note">{formatDateTime(preview.backup.created_at)}</span>
+            </div>
+            <button className="secondary" onClick={() => setPreview(null)}>Close</button>
+          </header>
+          {preview.version_warning ? (
+            <div className="alert error">
+              Backup KOReader version {preview.backup.koreader_version} differs from the installed{" "}
+              {preview.current_koreader_version}.
+            </div>
+          ) : null}
+          {preview.backup.credentials_included ? (
+            <div className="alert info">
+              This backup contains credentials and will restore them to the Kobo.
+            </div>
+          ) : null}
+          <div className="preview-metrics">
+            <MetricCard label="Matched" value={preview.exact_matches.length} />
+            <MetricCard label="Missing" value={preview.missing_matches.length} />
+            <MetricCard label="Ambiguous" value={preview.ambiguous_matches.length} />
+            <MetricCard label="Books scanned" value={preview.book_count} />
+          </div>
+          <BackupCounts counts={preview.counts} />
+          <p className="space-check">
+            Requires {formatBytes(preview.required_bytes)}; {formatBytes(preview.available_bytes)} available.
+          </p>
+          {preview.missing_matches.length > 0 || preview.ambiguous_matches.length > 0 ? (
+            <div className="unmatched-list">
+              {[...preview.missing_matches, ...preview.ambiguous_matches].map((match, index) => (
+                <div key={`${match.source_path}-${index}`}>
+                  <strong>{match.title ?? match.old_doc_path ?? "Unknown book"}</strong>
+                  <span>
+                    {match.candidates?.length
+                      ? `${match.candidates.length} exact file candidates; skipped as ambiguous`
+                      : "No byte-identical book found; skipped"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <label className="restore-option">
+            <input
+              type="checkbox"
+              checked={restoreExtensions}
+              onChange={(event) => setRestoreExtensions(event.target.checked)}
+            />
+            Restore optional extensions and missing custom patches
+          </label>
+          <label className="restore-option confirm-option">
+            <input
+              type="checkbox"
+              checked={confirmed}
+              onChange={(event) => setConfirmed(event.target.checked)}
+            />
+            I understand this will modify the mounted Kobo
+          </label>
+          <button className="primary" disabled={busy || !confirmed} onClick={runRestore}>
+            {busy ? "Restoring..." : "Restore backup"}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function CalendarView({ calendar }: { calendar: Dashboard["charts"]["calendar"] }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { cells, weeks, monthLabels, startDate, endDate, totalDays, maxMinutes } = useMemo(
@@ -1083,6 +1299,7 @@ export default function App() {
   const [device, setDevice] = useState<DeviceStatus | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard>(emptyDashboard);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [backups, setBackups] = useState<RecoveryBackup[]>([]);
   const [activeView, setActiveView] = useState<View>("dashboard");
   const [error, setError] = useState<string | null>(null);
   const [autoImportError, setAutoImportError] = useState<string | null>(null);
@@ -1102,10 +1319,17 @@ export default function App() {
       }
     }
     const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
-    const [dashboardData, snapshotData] = await Promise.all([getDashboard(dashboardSnapshotId), getSnapshots()]);
+    const [dashboardData, snapshotData, backupData] = await Promise.all([
+      getDashboard(dashboardSnapshotId),
+      getSnapshots(),
+      getBackups().catch(() => null),
+    ]);
     setDevice(deviceStatus);
     setDashboard(dashboardData);
     setSnapshots(snapshotData.snapshots);
+    if (backupData && Array.isArray(backupData.backups)) {
+      setBackups(backupData.backups);
+    }
     setAutoImportError(nextAutoImportError);
   }
 
@@ -1169,11 +1393,45 @@ export default function App() {
     }
   }
 
+  async function handleBackup() {
+    setBusy(true);
+    setError(null);
+    try {
+      const created = await createKoboBackup();
+      setBackups((current) => [
+        created.backup,
+        ...current.filter((backup) => backup.id !== created.backup.id),
+      ]);
+      getBackups()
+        .then((backupData) => setBackups(backupData.backups))
+        .catch(() => undefined);
+    } catch (err) {
+      throw err instanceof Error ? err : new Error("Recovery backup failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRestore(backupId: string, extensions: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await restoreBackup(backupId, extensions);
+      getBackups()
+        .then((backupData) => setBackups(backupData.backups))
+        .catch(() => undefined);
+      return result;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const latestSnapshot = snapshots[0] ?? dashboard.snapshot ?? null;
   const activeSnapshot = dashboard.snapshot ?? latestSnapshot;
   const navItems: Array<{ id: View; label: string; icon: string }> = [
     { id: "dashboard", label: "Dashboard", icon: "⌂" },
     { id: "snapshots", label: "Snapshots", icon: "◎" },
+    { id: "backups", label: "Backups", icon: "↻" },
     { id: "books", label: "Books", icon: "□" },
     { id: "calendar", label: "Calendar", icon: "◷" },
     { id: "export", label: "Export", icon: "⇩" },
@@ -1200,6 +1458,7 @@ export default function App() {
         </nav>
         <div className="storage-card">
           <strong>{snapshots.length} snapshots</strong>
+          <span>{backups.length} recovery backups</span>
         </div>
       </aside>
 
@@ -1233,6 +1492,16 @@ export default function App() {
             snapshots={snapshots}
             activeSnapshotId={activeSnapshot?.id ?? null}
             onSelectSnapshot={loadSnapshot}
+          />
+        ) : null}
+        {activeView === "backups" ? (
+          <BackupsView
+            backups={backups}
+            device={device}
+            busy={busy}
+            onCreate={handleBackup}
+            onPreview={getRestorePreview}
+            onRestore={handleRestore}
           />
         ) : null}
         {activeView === "books" ? <BooksView books={dashboard.books} /> : null}

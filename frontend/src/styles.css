@@ -876,6 +876,10 @@ td {
   min-width: 0;
 }
 
+.backups-panel {
+  min-width: 0;
+}
+
 .calendar-panel {
   justify-self: start;
   width: 100%;
@@ -883,7 +887,9 @@ td {
 }
 
 .calendar-panel header,
-.settings-panel header {
+.settings-panel header,
+.backups-panel > header,
+.restore-preview > header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -893,8 +899,153 @@ td {
 
 .calendar-panel h3,
 .settings-panel h3,
-.settings-panel h4 {
+.settings-panel h4,
+.backups-panel h3,
+.backups-panel h4 {
   margin: 0;
+}
+
+.storage-card {
+  display: grid;
+  gap: 4px;
+}
+
+.storage-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.backup-list {
+  display: grid;
+  gap: 10px;
+}
+
+.backup-card,
+.restore-preview,
+.restore-result {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--tile-bg);
+  padding: 14px;
+}
+
+.backup-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 18px;
+}
+
+.backup-card-main,
+.backup-card-main > div {
+  min-width: 0;
+}
+
+.backup-card-main > div {
+  display: grid;
+  gap: 4px;
+}
+
+.backup-card-main span,
+.backup-card-main code,
+.backup-counts,
+.space-check,
+.unmatched-list span,
+.restore-result p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.backup-card-main code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credential-warning {
+  display: inline-flex;
+  margin-top: 8px;
+  color: var(--warn) !important;
+  font-weight: 750;
+}
+
+.backup-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.backup-counts strong {
+  color: var(--ink);
+}
+
+.restore-preview {
+  margin-top: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.restore-preview > header {
+  margin-bottom: 0;
+}
+
+.preview-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.preview-metrics .metric-card {
+  min-height: 78px;
+  padding: 14px;
+  box-shadow: none;
+}
+
+.preview-metrics .metric-card strong {
+  font-size: 22px;
+}
+
+.space-check,
+.restore-result p {
+  margin: 0;
+}
+
+.unmatched-list {
+  display: grid;
+  gap: 8px;
+}
+
+.unmatched-list > div {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.restore-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.restore-option input {
+  width: 16px;
+  height: 16px;
+}
+
+.confirm-option {
+  font-weight: 700;
+}
+
+.restore-result {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  border-color: var(--alert-success-line);
+  background: var(--alert-success-bg);
 }
 
 .calendar-panel header > div:first-child {
@@ -1105,8 +1256,13 @@ td {
   .device-banner,
   .settings-panel dl,
   .metrics-grid,
-  .charts-grid {
+  .charts-grid,
+  .backup-card {
     grid-template-columns: 1fr;
+  }
+
+  .preview-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .calendar-panel header {
@@ -1140,6 +1296,10 @@ td {
   .settings-panel,
   .empty-state {
     padding: 14px;
+  }
+
+  .preview-metrics {
+    grid-template-columns: 1fr;
   }
 
   .metrics-grid {

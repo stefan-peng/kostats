@@ -9,7 +9,7 @@ import pytest
 from backend.app import config
 from backend.app.device import CandidateStatus, auto_import_from_kobo, device_status, import_from_kobo
 from backend.app.errors import ImportError, UnsupportedSchemaError
-from backend.app.storage import SnapshotStore
+from backend.app.storage import SnapshotStore, copy_sqlite_database
 
 
 def create_db(path: Path) -> None:
@@ -309,6 +309,36 @@ def test_auto_import_from_kobo_detects_sidecar_only_changes(tmp_path: Path) -> N
     assert third["imported"] is True
     assert third["snapshot"]["sidecar_path"]
     assert len(store.list_snapshots()) == 2
+
+
+def test_auto_import_holds_device_lock_while_reading_kobo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    add_reading_row(db_path, book_id=1, title="Dune", duration=1200)
+    store = SnapshotStore(tmp_path / "data")
+    lock_held = False
+
+    class TrackingLock:
+        def __enter__(self) -> None:
+            nonlocal lock_held
+            lock_held = True
+
+        def __exit__(self, *args: object) -> None:
+            nonlocal lock_held
+            lock_held = False
+
+    def checked_copy(source: Path, destination: Path) -> None:
+        assert lock_held
+        copy_sqlite_database(source, destination)
+
+    monkeypatch.setattr("backend.app.device.AUTO_IMPORT_LOCK", TrackingLock())
+    monkeypatch.setattr("backend.app.device.copy_sqlite_database", checked_copy)
+
+    auto_import_from_kobo(store, volume)
 
 
 def test_kobo_snapshots_keep_historical_sidecar_state(tmp_path: Path) -> None:

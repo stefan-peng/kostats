@@ -262,6 +262,27 @@ const windowsAutoSnapshot = {
   source_path: "E:\\.adds\\koreader\\settings\\statistics.sqlite3",
 };
 
+const recoveryBackup = {
+  id: "20260610T120000Z",
+  created_at: "2026-06-10T12:00:00Z",
+  source: "kobo",
+  source_mount: "/Volumes/KOBOeReader",
+  archive_path: "/tmp/20260610T120000Z.zip",
+  archive_size: 8192,
+  content_hash: "backup-hash",
+  koreader_version: "v2026.03",
+  device_model: "Kobo_monza",
+  document_metadata_folder: "doc",
+  credentials_included: true,
+  counts: {
+    sidecars: 3,
+    settings: 4,
+    databases: 2,
+    dictionaries: 1,
+    extensions: 2,
+  },
+};
+
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -816,6 +837,87 @@ describe("App", () => {
     expect(deviceBanner.getByText(/May 1, 2026/)).toBeInTheDocument();
     expect(deviceBanner.getByText("Latest")).toBeInTheDocument();
     expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
+  });
+
+  it("creates, previews, confirms, and reports a recovery restore", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    let restoreBody: Record<string, unknown> | null = null;
+    mockFetch((url, init) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return {
+          imported: false,
+          reason: "unchanged",
+          snapshot: populatedDashboard.snapshot,
+          device: mountedStatus,
+        };
+      }
+      if (url === "/api/backups") return { backups: [recoveryBackup] };
+      if (url === "/api/backups/kobo") return { created: false, backup: recoveryBackup };
+      if (url.endsWith("/restore-preview")) {
+        return {
+          backup: recoveryBackup,
+          device: mountedStatus,
+          current_koreader_version: "v2026.04",
+          version_warning: true,
+          required_bytes: 4096,
+          available_bytes: 1024 * 1024,
+          counts: recoveryBackup.counts,
+          exact_matches: [{ title: "Matched Book", source_path: "Book.sdr" }],
+          missing_matches: [{ title: "Missing Book", source_path: "Missing.sdr" }],
+          ambiguous_matches: [],
+          book_count: 2,
+        };
+      }
+      if (url.endsWith("/restore") && init?.method === "POST") {
+        restoreBody = JSON.parse(String(init.body));
+        return {
+          restored: { settings: 4, databases: 2, sidecars: 1 },
+          skipped: { sidecars: 1, extensions: 0 },
+          failed: [],
+          safety_backup_id: "20260611T120000Z",
+          restart_required: true,
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Backups/i }));
+
+    expect(screen.getByText("Contains credentials")).toBeInTheDocument();
+    expect(screen.getByText("sidecar files")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Back up now/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+
+    const preview = await screen.findByRole("dialog", { name: "Restore preview" });
+    expect(within(preview).getByText(/differs from the installed/)).toBeInTheDocument();
+    expect(within(preview).getByText("Missing Book")).toBeInTheDocument();
+    expect(within(preview).getByRole("button", { name: "Restore backup" })).toBeDisabled();
+
+    await userEvent.click(
+      within(preview).getByRole("checkbox", { name: /Restore optional extensions/i }),
+    );
+    await userEvent.click(
+      within(preview).getByRole("checkbox", { name: /I understand this will modify/i }),
+    );
+    await userEvent.click(within(preview).getByRole("button", { name: "Restore backup" }));
+
+    expect(await screen.findByRole("heading", { name: "Restore complete" })).toBeInTheDocument();
+    expect(screen.getByText(/20260611T120000Z/)).toBeInTheDocument();
+    expect(screen.getByText(/Eject the Kobo and restart KOReader/)).toBeInTheDocument();
+    expect(restoreBody).toEqual({
+      confirmed: true,
+      restore_optional_extensions: true,
+    });
   });
 
   it("exports selected dashboard data", async () => {
