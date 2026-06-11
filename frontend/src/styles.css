@@ -640,11 +640,11 @@ table {
 }
 
 .recent-books-table {
-  min-width: 780px;
+  min-width: 860px;
 }
 
 .books-table {
-  min-width: 1140px;
+  min-width: 1280px;
 }
 
 .snapshots-table {
@@ -672,7 +672,11 @@ table {
 }
 
 .recent-books-table .progress-col {
-  width: 17%;
+  width: 14%;
+}
+
+.recent-books-table .status-col {
+  width: 10%;
 }
 
 .books-table .book-col {
@@ -696,7 +700,7 @@ table {
 }
 
 .books-table .progress-col {
-  width: 14%;
+  width: 10%;
 }
 
 .books-table .date-col {
@@ -704,7 +708,15 @@ table {
 }
 
 .books-table .records-col {
+  width: 7%;
+}
+
+.books-table .status-col {
   width: 8%;
+}
+
+.books-table .highlights-col {
+  width: 7%;
 }
 
 .snapshots-table .imported-col {

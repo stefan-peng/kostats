@@ -109,6 +109,10 @@ def get_dashboard(snapshot_id: str = "latest") -> dict:
                 "books": 0,
                 "pages": 0,
                 "current_streak": 0,
+                "finished_books": 0,
+                "reading_books": 0,
+                "abandoned_books": 0,
+                "highlights": 0,
             },
             "charts": {
                 "daily": [],

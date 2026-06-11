@@ -37,6 +37,32 @@ def add_reading_row(path: Path, *, book_id: int, title: str, duration: int) -> N
     conn.close()
 
 
+def write_sidecar(volume: Path, *, status: str, percent: float = 0.5) -> Path:
+    path = volume / "books/Test Book.sdr/metadata.epub.lua"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""
+        return {{
+            ["doc_path"] = "/mnt/onboard/books/Test Book.epub",
+            ["partial_md5_checksum"] = "test-md5",
+            ["percent_finished"] = {percent},
+            ["summary"] = {{
+                ["status"] = "{status}",
+                ["modified"] = "2026-06-11",
+            }},
+            ["stats"] = {{
+                ["title"] = "Test Book",
+                ["authors"] = "Test Author",
+                ["highlights"] = 2,
+                ["notes"] = 0,
+            }},
+        }}
+        """,
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_snapshot_store_imports_timestamped_copy(tmp_path: Path) -> None:
     source = tmp_path / "source.sqlite3"
     create_db(source)
@@ -263,6 +289,41 @@ def test_auto_import_from_kobo_imports_only_when_database_changes(tmp_path: Path
     assert third["imported"] is True
     assert third["snapshot"]["id"] != first["snapshot"]["id"]
     assert len(store.list_snapshots()) == 2
+
+
+def test_auto_import_from_kobo_detects_sidecar_only_changes(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    add_reading_row(db_path, book_id=1, title="Test Book", duration=1200)
+    sidecar = write_sidecar(volume, status="reading")
+    store = SnapshotStore(tmp_path / "data")
+
+    first = auto_import_from_kobo(store, volume)
+    second = auto_import_from_kobo(store, volume)
+    sidecar.write_text(sidecar.read_text(encoding="utf-8").replace('"reading"', '"complete"'), encoding="utf-8")
+    third = auto_import_from_kobo(store, volume)
+
+    assert first["imported"] is True
+    assert second["reason"] == "unchanged"
+    assert third["imported"] is True
+    assert third["snapshot"]["sidecar_path"]
+    assert len(store.list_snapshots()) == 2
+
+
+def test_kobo_snapshots_keep_historical_sidecar_state(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    sidecar = write_sidecar(volume, status="reading", percent=0.25)
+    store = SnapshotStore(tmp_path / "data")
+
+    first = import_from_kobo(store, volume)["snapshot"]
+    sidecar.write_text(sidecar.read_text(encoding="utf-8").replace('"reading"', '"complete"'), encoding="utf-8")
+
+    stored_payload = Path(first["sidecar_path"]).read_text(encoding="utf-8")
+    assert '"status": "reading"' in stored_payload
+    assert '"status": "complete"' not in stored_payload
 
 
 def test_auto_import_from_kobo_without_mount_does_not_create_snapshot(tmp_path: Path) -> None:

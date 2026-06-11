@@ -2,7 +2,7 @@
 
 Local KOReader reading statistics dashboard for Kobo devices.
 
-`kostats` copies KOReader's `settings/statistics.sqlite3` database from a mounted Kobo into local timestamped snapshots, then reads only the local snapshots for dashboard views. The Kobo is never modified.
+`kostats` copies KOReader's `settings/statistics.sqlite3` database and normalized `.sdr` book metadata from a mounted Kobo into local timestamped snapshots, then reads only the local snapshots for dashboard views. The Kobo is never modified.
 
 ## Run locally
 
@@ -28,4 +28,4 @@ npm test --prefix frontend
 
 ## Local data
 
-Imported database snapshots are stored under `data/snapshots/`, with metadata in `data/manifest.json`. The entire `data/` directory is ignored by Git.
+Imported database and sidecar metadata snapshots are stored under `data/snapshots/`, with metadata in `data/manifest.json`. The entire `data/` directory is ignored by Git.

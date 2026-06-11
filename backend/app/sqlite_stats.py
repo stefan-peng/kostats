@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .errors import UnsupportedSchemaError
+from .sidecars import load_sidecar_snapshot
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class SnapshotMeta:
     user_version: int
     schema_version: str
     content_hash: str | None = None
+    sidecar_path: str | None = None
+    sidecar_hash: str | None = None
 
 
 def quote_identifier(identifier: str) -> str:
@@ -217,6 +220,56 @@ def latest_snapshot_from_manifest(manifest: dict[str, Any]) -> SnapshotMeta | No
     return SnapshotMeta(**latest)
 
 
+def sidecar_sort_key(record: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(record.get("status_modified") or ""),
+        str(record.get("source_path") or ""),
+    )
+
+
+def build_sidecar_indexes(
+    records: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
+    md5_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        md5 = display_text(record.get("partial_md5_checksum"), "")
+        if md5:
+            md5_groups[md5].append(record)
+
+    ambiguous_md5s = {md5 for md5, group in md5_groups.items() if len(group) > 1}
+    by_md5 = {
+        md5: group[0]
+        for md5, group in md5_groups.items()
+        if len(group) == 1
+    }
+    fallback_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        md5 = display_text(record.get("partial_md5_checksum"), "")
+        if md5 in ambiguous_md5s:
+            continue
+        title = real_book_identity_key(record.get("title"))
+        authors = real_book_identity_key(record.get("authors"))
+        if title and authors:
+            fallback_groups[(title, authors)].append(record)
+
+    unique_fallbacks = {
+        key: group[0]
+        for key, group in fallback_groups.items()
+        if len(group) == 1
+    }
+    return by_md5, unique_fallbacks
+
+
+def effective_book_status(book: dict[str, Any]) -> str | None:
+    status = book.get("status")
+    if status in {"complete", "reading", "abandoned"}:
+        return status
+    progress = book.get("progress")
+    if progress is None:
+        return None
+    return "complete" if progress >= 100 else "reading"
+
+
 def build_dashboard(
     path: Path,
     snapshot: SnapshotMeta | None = None,
@@ -224,6 +277,9 @@ def build_dashboard(
 ) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(path)
+
+    sidecar_records = load_sidecar_snapshot(Path(snapshot.sidecar_path) if snapshot and snapshot.sidecar_path else None)
+    sidecars_by_md5, sidecars_by_title_author = build_sidecar_indexes(sidecar_records)
 
     with open_readonly(path) as conn:
         names = table_names(conn)
@@ -336,13 +392,18 @@ def build_dashboard(
                 "md5": display_text(row["md5"], ""),
                 "series_key": optional_metadata_key(row["series"]),
                 "language_key": optional_metadata_key(row["language"]),
+                "series": display_text(row["series"], ""),
+                "language": display_text(row["language"], ""),
                 "last_open_timestamp": 0.0,
                 "time_seconds": 0.0,
                 "pages_seen": set(),
                 "max_page": None,
                 "total_pages": None,
+                "sidecar": None,
             },
         )
+        if book["sidecar"] is None and book["md5"]:
+            book["sidecar"] = sidecars_by_md5.get(book["md5"])
         book["time_seconds"] += duration
 
         opened = local_dt(row["last_open"]) or started
@@ -369,6 +430,15 @@ def build_dashboard(
                 continue
             if pages > 0:
                 book["total_pages"] = max(book["total_pages"] or 0, pages)
+
+    fallback_book_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for book in books.values():
+        if book["sidecar"] is None and book["title_key"] and book["authors_key"]:
+            fallback_book_groups[(book["title_key"], book["authors_key"])].append(book)
+    for key, group in fallback_book_groups.items():
+        sidecar = sidecars_by_title_author.get(key)
+        if sidecar is not None and len(group) == 1:
+            group[0]["sidecar"] = sidecar
 
     merger = UnionFind(list(books))
     md5_groups: dict[str, list[str]] = defaultdict(list)
@@ -404,6 +474,8 @@ def build_dashboard(
         source_book_ids = sorted((book["id"] for book in group), key=book_id_sort_key)
         source_md5s = sorted({book["md5"] for book in group if book["md5"]})
         latest_book = max(group, key=lambda item: (item["last_open_timestamp"], item["id"]))
+        matched_sidecars = [book["sidecar"] for book in group if book["sidecar"] is not None]
+        sidecar = max(matched_sidecars, key=sidecar_sort_key) if matched_sidecars else None
         pages_seen = set()
         for book in group:
             pages_seen.update(book["pages_seen"])
@@ -411,9 +483,11 @@ def build_dashboard(
         pages_read = len(pages_seen)
         max_page = latest_book["max_page"]
         total_pages = latest_book["total_pages"]
-        progress = None
+        page_progress = None
         if total_pages and max_page:
-            progress = min(100, round((max_page / total_pages) * 100))
+            page_progress = min(100, round((max_page / total_pages) * 100))
+        percent_finished = sidecar.get("percent_finished") if sidecar else None
+        progress = round(float(percent_finished) * 100) if percent_finished is not None else page_progress
         last_open = (
             datetime.fromtimestamp(latest_book["last_open_timestamp"]).astimezone().isoformat()
             if latest_book["last_open_timestamp"]
@@ -432,6 +506,15 @@ def build_dashboard(
                 "max_page": max_page,
                 "total_pages": total_pages,
                 "progress": progress,
+                "percent_finished": percent_finished,
+                "status": sidecar.get("status") if sidecar else None,
+                "status_modified": sidecar.get("status_modified") if sidecar else None,
+                "highlight_count": int(sidecar.get("highlight_count") or 0) if sidecar else 0,
+                "note_count": int(sidecar.get("note_count") or 0) if sidecar else 0,
+                "series": display_text(sidecar.get("series"), latest_book["series"]) if sidecar else latest_book["series"],
+                "series_index": sidecar.get("series_index") if sidecar else None,
+                "language": display_text(sidecar.get("language"), latest_book["language"]) if sidecar else latest_book["language"],
+                "metadata_available": sidecar is not None,
                 "source_book_ids": source_book_ids,
                 "source_md5s": source_md5s,
                 "merged_count": len(source_book_ids),
@@ -441,6 +524,10 @@ def build_dashboard(
     book_stats = sorted(book_stats, key=lambda item: item["last_open"] or "", reverse=True)
     recent_books = book_stats[:20]
     top_books = sorted(book_stats, key=lambda item: item["time_seconds"], reverse=True)[:10]
+    status_counts = {
+        status: sum(1 for book in book_stats if effective_book_status(book) == status)
+        for status in ("complete", "reading", "abandoned")
+    }
 
     sorted_days = sorted(day_seconds)
     sorted_months = sorted(month_seconds)
@@ -458,6 +545,10 @@ def build_dashboard(
             "books": len(book_stats),
             "pages": sum(book["pages"] for book in book_stats),
             "current_streak": current_streak(set(day_seconds), today=today),
+            "finished_books": status_counts["complete"],
+            "reading_books": status_counts["reading"],
+            "abandoned_books": status_counts["abandoned"],
+            "highlights": sum(book["highlight_count"] for book in book_stats),
         },
         "charts": {
             "daily": [

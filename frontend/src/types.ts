@@ -25,6 +25,8 @@ export type Snapshot = {
   user_version: number;
   schema_version: string;
   content_hash?: string | null;
+  sidecar_path?: string | null;
+  sidecar_hash?: string | null;
 };
 
 export type AutoImportResult = {
@@ -46,6 +48,15 @@ export type BookStats = {
   max_page: number | null;
   total_pages: number | null;
   progress: number | null;
+  percent_finished: number | null;
+  status: "reading" | "complete" | "abandoned" | null;
+  status_modified: string | null;
+  highlight_count: number;
+  note_count: number;
+  series: string;
+  series_index: number | null;
+  language: string;
+  metadata_available: boolean;
   source_book_ids: string[];
   source_md5s: string[];
   merged_count: number;
@@ -61,6 +72,10 @@ export type Dashboard = {
     books: number;
     pages: number;
     current_streak: number;
+    finished_books: number;
+    reading_books: number;
+    abandoned_books: number;
+    highlights: number;
   };
   charts: {
     daily: Array<{ date: string; label: string; minutes: number }>;

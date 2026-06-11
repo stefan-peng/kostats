@@ -14,7 +14,8 @@ from .config import (
     kobo_volume_is_default_mount_path,
 )
 from .errors import ImportError
-from .storage import SnapshotStore, copy_sqlite_database, hash_file
+from .storage import SnapshotStore, combined_content_hash, copy_sqlite_database, hash_file
+from .sidecars import build_sidecar_snapshot, serialize_sidecar_snapshot, sidecar_snapshot_hash
 
 
 KOBO_DB_CANDIDATES = [
@@ -107,10 +108,13 @@ def import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> dict[s
             )
         raise ImportError("Kobo is mounted, but no KOReader statistics.sqlite3 file was found.")
 
+    root = Path(status["mount_path"])
+    sidecar_payload = serialize_sidecar_snapshot(build_sidecar_snapshot(root))
     meta = store.import_file(
         Path(status["selected_path"]),
         source_kind="kobo",
         source_path=status["selected_path"],
+        sidecar_payload=sidecar_payload,
     )
     return {"snapshot": meta.__dict__, "device": status}
 
@@ -135,12 +139,16 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
     source = Path(status["selected_path"])
     with tempfile.TemporaryDirectory(prefix="kostats-auto-import-") as tmp_dir:
         prepared = Path(tmp_dir) / "statistics.sqlite3"
+        prepared_sidecars = Path(tmp_dir) / "sidecars.json"
         try:
             copy_sqlite_database(source, prepared)
         except sqlite3.DatabaseError as exc:
             raise ImportError(f"Selected file is not a readable SQLite database: {source}") from exc
 
-        prepared_hash = hash_file(prepared)
+        sidecar_payload = serialize_sidecar_snapshot(build_sidecar_snapshot(Path(status["mount_path"])))
+        prepared_sidecars.write_bytes(sidecar_payload)
+        prepared_sidecar_hash = sidecar_snapshot_hash(sidecar_payload)
+        prepared_hash = combined_content_hash(hash_file(prepared), prepared_sidecar_hash)
         with AUTO_IMPORT_LOCK:
             latest = store.latest()
             latest_hash = store.snapshot_content_hash(latest)
@@ -154,6 +162,8 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
                 source_kind="kobo-auto",
                 source_path=status["selected_path"],
                 content_hash=prepared_hash,
+                sidecar_source=prepared_sidecars,
+                sidecar_hash=prepared_sidecar_hash,
             )
 
     return {

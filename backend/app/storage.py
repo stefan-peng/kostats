@@ -78,6 +78,7 @@ class SnapshotStore:
         *,
         source_kind: str,
         source_path: str | None = None,
+        sidecar_payload: bytes | None = None,
     ) -> SnapshotMeta:
         self.ensure()
         if not source.exists():
@@ -86,18 +87,35 @@ class SnapshotStore:
             raise ImportError(f"Database path is not a file: {source}")
 
         imported_at, snapshot_id, destination = self.next_snapshot_destination()
+        sidecar_destination = self.sidecar_destination(snapshot_id) if sidecar_payload is not None else None
         try:
             copy_sqlite_database(source, destination)
+            if sidecar_destination is not None:
+                sidecar_destination.write_bytes(sidecar_payload)
         except sqlite3.DatabaseError as exc:
             destination.unlink(missing_ok=True)
+            if sidecar_destination is not None:
+                sidecar_destination.unlink(missing_ok=True)
             raise ImportError(f"Selected file is not a readable SQLite database: {source_path or source}") from exc
+        except OSError as exc:
+            destination.unlink(missing_ok=True)
+            if sidecar_destination is not None:
+                sidecar_destination.unlink(missing_ok=True)
+            raise ImportError(f"Could not copy sidecar metadata: {source_path or source}") from exc
 
+        sidecar_hash = hash_file(sidecar_destination) if sidecar_destination else None
+        content_hash = hash_file(destination)
+        if sidecar_hash:
+            content_hash = combined_content_hash(content_hash, sidecar_hash)
         return self.record_snapshot(
             destination,
             imported_at=imported_at,
             snapshot_id=snapshot_id,
             source_kind=source_kind,
             source_path=source_path,
+            content_hash=content_hash,
+            sidecar_destination=sidecar_destination,
+            sidecar_hash=sidecar_hash,
         )
 
     def import_snapshot_copy(
@@ -107,6 +125,8 @@ class SnapshotStore:
         source_kind: str,
         source_path: str | None = None,
         content_hash: str | None = None,
+        sidecar_source: Path | None = None,
+        sidecar_hash: str | None = None,
     ) -> SnapshotMeta:
         self.ensure()
         if not source.exists():
@@ -115,10 +135,15 @@ class SnapshotStore:
             raise ImportError(f"Database path is not a file: {source}")
 
         imported_at, snapshot_id, destination = self.next_snapshot_destination()
+        sidecar_destination = self.sidecar_destination(snapshot_id) if sidecar_source is not None else None
         try:
             shutil.copy2(source, destination)
+            if sidecar_source is not None and sidecar_destination is not None:
+                shutil.copy2(sidecar_source, sidecar_destination)
         except OSError as exc:
             destination.unlink(missing_ok=True)
+            if sidecar_destination is not None:
+                sidecar_destination.unlink(missing_ok=True)
             raise ImportError(f"Could not copy database snapshot: {source_path or source}") from exc
 
         return self.record_snapshot(
@@ -128,12 +153,17 @@ class SnapshotStore:
             source_kind=source_kind,
             source_path=source_path,
             content_hash=content_hash,
+            sidecar_destination=sidecar_destination,
+            sidecar_hash=sidecar_hash,
         )
 
     def next_snapshot_destination(self) -> tuple[str, str, Path]:
         imported_at = datetime.now(timezone.utc).isoformat()
         snapshot_id = imported_at.replace(":", "").replace("+00:00", "Z")
         return imported_at, snapshot_id, self.snapshots_dir / f"{snapshot_id}-statistics.sqlite3"
+
+    def sidecar_destination(self, snapshot_id: str) -> Path:
+        return self.snapshots_dir / f"{snapshot_id}-sidecars.json"
 
     def record_snapshot(
         self,
@@ -144,6 +174,8 @@ class SnapshotStore:
         source_kind: str,
         source_path: str | None,
         content_hash: str | None = None,
+        sidecar_destination: Path | None = None,
+        sidecar_hash: str | None = None,
     ) -> SnapshotMeta:
         try:
             user_version = read_user_version(destination)
@@ -157,10 +189,14 @@ class SnapshotStore:
                 user_version=user_version,
                 schema_version=str(user_version),
                 content_hash=content_hash or hash_file(destination),
+                sidecar_path=str(sidecar_destination) if sidecar_destination else None,
+                sidecar_hash=sidecar_hash or (hash_file(sidecar_destination) if sidecar_destination else None),
             )
             build_dashboard(destination, meta)
         except UnsupportedSchemaError:
             destination.unlink(missing_ok=True)
+            if sidecar_destination is not None:
+                sidecar_destination.unlink(missing_ok=True)
             raise
 
         manifest = self.load_manifest()
@@ -181,4 +217,12 @@ def hash_file(path: Path) -> str:
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
+    return digest.hexdigest()
+
+
+def combined_content_hash(database_hash: str, sidecar_hash: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(database_hash.encode("ascii"))
+    digest.update(b"\0")
+    digest.update(sidecar_hash.encode("ascii"))
     return digest.hexdigest()

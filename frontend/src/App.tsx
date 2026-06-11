@@ -13,7 +13,7 @@ import type { BookStats, Dashboard, DeviceStatus, Snapshot } from "./types";
 
 type View = "dashboard" | "snapshots" | "books" | "calendar" | "export" | "settings";
 type BookSortKey = "last_open" | "time_seconds" | "pages" | "progress" | "title";
-type BookProgressFilter = "all" | "in-progress" | "finished" | "unknown";
+type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
 
 const emptyDashboard: Dashboard = {
   has_data: false,
@@ -25,6 +25,10 @@ const emptyDashboard: Dashboard = {
     books: 0,
     pages: 0,
     current_streak: 0,
+    finished_books: 0,
+    reading_books: 0,
+    abandoned_books: 0,
+    highlights: 0,
   },
   charts: {
     daily: [],
@@ -169,7 +173,25 @@ function formatBytes(bytes: number) {
 }
 
 function formatProgress(book: BookStats) {
+  if (book.percent_finished != null) {
+    const value = Math.round(book.percent_finished * 1000) / 10;
+    return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+  }
   return book.progress == null ? "N/A" : `${book.progress}%`;
+}
+
+function effectiveStatus(book: BookStats) {
+  if (book.status != null) return book.status;
+  if (book.progress == null) return null;
+  return book.progress >= 100 ? "complete" : "reading";
+}
+
+function formatStatus(book: BookStats) {
+  const status = effectiveStatus(book);
+  if (status === "complete") return "Finished";
+  if (status === "reading") return "Reading";
+  if (status === "abandoned") return "Abandoned";
+  return "Unknown";
 }
 
 function formatPageProgress(book: BookStats) {
@@ -184,9 +206,10 @@ function formatSourceRecords(book: BookStats) {
 
 function matchesProgressFilter(book: BookStats, filter: BookProgressFilter) {
   if (filter === "all") return true;
-  if (filter === "unknown") return book.progress == null;
-  if (filter === "finished") return book.progress != null && book.progress >= 100;
-  return book.progress != null && book.progress < 100;
+  const status = effectiveStatus(book);
+  if (filter === "unknown") return status == null;
+  if (filter === "finished") return status === "complete";
+  return status === filter;
 }
 
 function compareNullableNumbers(a: number | null, b: number | null) {
@@ -499,6 +522,7 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
             <col className="date-col" />
             <col className="time-col" />
             <col className="pages-col" />
+            <col className="status-col" />
             <col className="progress-col" />
           </colgroup>
           <thead>
@@ -508,13 +532,14 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
               <th>Last opened</th>
               <th>Time</th>
               <th>Pages</th>
+              <th>Status</th>
               <th>Progress</th>
             </tr>
           </thead>
           <tbody>
             {books.length === 0 ? (
               <tr>
-                <td colSpan={6} className="empty-row">
+                <td colSpan={7} className="empty-row">
                   No books yet.
                 </td>
               </tr>
@@ -532,6 +557,7 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
                   </td>
                   <td>{book.time_label}</td>
                   <td>{book.pages.toLocaleString()}</td>
+                  <td>{formatStatus(book)}</td>
                   <td>
                     <div className="progress-cell">
                       <span>
@@ -560,7 +586,7 @@ function BooksView({ books }: { books: BookStats[] }) {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const sorted = books
       .filter((book) => {
-        const haystack = `${book.title} ${book.authors}`.toLocaleLowerCase();
+        const haystack = `${book.title} ${book.authors} ${book.series} ${book.language}`.toLocaleLowerCase();
         return (!normalizedQuery || haystack.includes(normalizedQuery)) && matchesProgressFilter(book, progressFilter);
       })
       .sort((a, b) => {
@@ -582,6 +608,7 @@ function BooksView({ books }: { books: BookStats[] }) {
 
   const totalTimeSeconds = filteredBooks.reduce((total, book) => total + book.time_seconds, 0);
   const totalPages = filteredBooks.reduce((total, book) => total + book.pages, 0);
+  const totalHighlights = filteredBooks.reduce((total, book) => total + book.highlight_count, 0);
 
   return (
     <section className="recent-panel books-panel">
@@ -599,6 +626,9 @@ function BooksView({ books }: { books: BookStats[] }) {
           <span>
             <strong>{totalPages.toLocaleString()}</strong> pages seen
           </span>
+          <span>
+            <strong>{totalHighlights.toLocaleString()}</strong> highlights
+          </span>
         </div>
       </header>
       <div className="books-controls" aria-label="Book table controls">
@@ -612,12 +642,13 @@ function BooksView({ books }: { books: BookStats[] }) {
           />
         </label>
         <label>
-          Progress
+          Status
           <select value={progressFilter} onChange={(event) => setProgressFilter(event.target.value as BookProgressFilter)}>
             <option value="all">All books</option>
-            <option value="in-progress">In progress</option>
+            <option value="reading">Reading</option>
             <option value="finished">Finished</option>
-            <option value="unknown">Unknown progress</option>
+            <option value="abandoned">Abandoned</option>
+            <option value="unknown">Unknown</option>
           </select>
         </label>
         <label>
@@ -646,7 +677,9 @@ function BooksView({ books }: { books: BookStats[] }) {
             <col className="time-col" />
             <col className="pages-col" />
             <col className="position-col" />
+            <col className="status-col" />
             <col className="progress-col" />
+            <col className="highlights-col" />
             <col className="date-col" />
             <col className="records-col" />
           </colgroup>
@@ -657,7 +690,9 @@ function BooksView({ books }: { books: BookStats[] }) {
               <th>Time</th>
               <th>Pages seen</th>
               <th>Position</th>
+              <th>Status</th>
               <th>Progress</th>
+              <th>Highlights</th>
               <th>Last opened</th>
               <th>Records</th>
             </tr>
@@ -665,7 +700,7 @@ function BooksView({ books }: { books: BookStats[] }) {
           <tbody>
             {filteredBooks.length === 0 ? (
               <tr>
-                <td colSpan={8} className="empty-row">
+                <td colSpan={10} className="empty-row">
                   No books match the current filters.
                 </td>
               </tr>
@@ -681,6 +716,7 @@ function BooksView({ books }: { books: BookStats[] }) {
                   <td>{book.time_label}</td>
                   <td>{book.pages.toLocaleString()}</td>
                   <td>{formatPageProgress(book)}</td>
+                  <td>{formatStatus(book)}</td>
                   <td>
                     <div className="progress-cell">
                       <span>
@@ -689,6 +725,7 @@ function BooksView({ books }: { books: BookStats[] }) {
                       <em>{formatProgress(book)}</em>
                     </div>
                   </td>
+                  <td>{book.highlight_count.toLocaleString()}</td>
                   <td title={formatDateTime(book.last_open)}>
                     <span className="cell-truncate">{formatDateTime(book.last_open)}</span>
                   </td>
@@ -725,6 +762,10 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
         <MetricCard label="Books" value={dashboard.summary.books} />
         <MetricCard label="Pages" value={dashboard.summary.pages.toLocaleString()} />
         <MetricCard label="Current streak" value={streakLabel} />
+        <MetricCard label="Finished" value={dashboard.summary.finished_books} />
+        <MetricCard label="Reading" value={dashboard.summary.reading_books} />
+        <MetricCard label="Abandoned" value={dashboard.summary.abandoned_books} />
+        <MetricCard label="Highlights" value={dashboard.summary.highlights} />
       </section>
 
       <section className="charts-grid">
@@ -936,15 +977,39 @@ function ExportView({ dashboard }: { dashboard: Dashboard }) {
   }
 
   function exportBooksCsv() {
-    const header = ["Title", "Author", "Last opened", "Time", "Pages seen", "Position", "Progress", "Records", "Source book IDs"];
+    const header = [
+      "Title",
+      "Author",
+      "Series",
+      "Series index",
+      "Language",
+      "Status",
+      "Status modified",
+      "Last opened",
+      "Time",
+      "Pages seen",
+      "Position",
+      "Progress",
+      "Highlights",
+      "Notes",
+      "Records",
+      "Source book IDs",
+    ];
     const rows = dashboard.books.map((book) => [
       book.title,
       book.authors,
+      book.series,
+      book.series_index,
+      book.language,
+      formatStatus(book),
+      book.status_modified ?? "",
       book.last_open ?? "",
       book.time_label,
       book.pages,
       formatPageProgress(book),
       formatProgress(book),
+      book.highlight_count,
+      book.note_count,
       book.merged_count,
       book.source_book_ids.join("; "),
     ]);

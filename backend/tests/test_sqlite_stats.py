@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from backend.app.errors import UnsupportedSchemaError
-from backend.app.sqlite_stats import build_dashboard, current_streak
+from backend.app.sqlite_stats import SnapshotMeta, build_dashboard, current_streak
 
 
 def ts(year: int, month: int, day: int, hour: int = 12) -> int:
@@ -214,6 +215,22 @@ def create_duplicate_books_db(path: Path) -> None:
     conn.close()
 
 
+def write_sidecar_snapshot(path: Path, records: list[dict]) -> SnapshotMeta:
+    sidecar_path = path.with_name("sidecars.json")
+    sidecar_path.write_text(json.dumps({"version": 1, "records": records}), encoding="utf-8")
+    return SnapshotMeta(
+        id="sidecar-test",
+        imported_at="2026-06-11T12:00:00+00:00",
+        source="test",
+        source_path=None,
+        path=str(path),
+        file_size=path.stat().st_size,
+        user_version=0,
+        schema_version="0",
+        sidecar_path=str(sidecar_path),
+    )
+
+
 def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     db_path = tmp_path / "statistics.sqlite3"
     create_current_db(db_path)
@@ -373,6 +390,178 @@ def test_duplicate_book_false_positive_controls(tmp_path: Path) -> None:
     assert len(groups[("Similar Title", "Same Author")]) == 1
     assert len(groups[("Similar Title: Subtitle", "Same Author")]) == 1
     assert all(book["merged_count"] == 1 for books in groups.values() for book in books if book["title"] != "Merged Work")
+
+
+def test_sidecar_status_and_exact_progress_override_page_progress(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_duplicate_books_db(db_path)
+    snapshot = write_sidecar_snapshot(
+        db_path,
+        [
+            {
+                "partial_md5_checksum": "c1",
+                "title": "Title Clash",
+                "authors": "Author One",
+                "status": "complete",
+                "percent_finished": 0.4666666667,
+                "status_modified": "2026-06-10",
+                "highlight_count": 3,
+                "note_count": 1,
+                "series": "Test Series",
+                "series_index": 2,
+                "language": "en",
+            },
+            {
+                "partial_md5_checksum": "c2",
+                "title": "Title Clash",
+                "authors": "Author Two",
+                "status": "abandoned",
+                "percent_finished": 0.9,
+                "status_modified": "2026-06-09",
+                "highlight_count": 1,
+                "note_count": 0,
+                "series": None,
+                "series_index": None,
+                "language": "fr",
+            },
+        ],
+    )
+
+    dashboard = build_dashboard(db_path, snapshot)
+    completed = next(book for book in dashboard["books"] if book["authors"] == "Author One")
+    abandoned = next(book for book in dashboard["books"] if book["authors"] == "Author Two")
+
+    assert completed["status"] == "complete"
+    assert completed["progress"] == 47
+    assert completed["percent_finished"] == pytest.approx(0.4666666667)
+    assert completed["highlight_count"] == 3
+    assert completed["note_count"] == 1
+    assert completed["series"] == "Test Series"
+    assert completed["series_index"] == 2
+    assert completed["metadata_available"] is True
+    assert abandoned["status"] == "abandoned"
+    assert abandoned["progress"] == 90
+    assert dashboard["summary"]["finished_books"] == 1
+    assert dashboard["summary"]["abandoned_books"] == 1
+    assert dashboard["summary"]["highlights"] == 4
+
+
+def test_sidecar_unique_title_author_fallback_and_missing_metadata(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_current_db(db_path)
+    snapshot = write_sidecar_snapshot(
+        db_path,
+        [
+            {
+                "partial_md5_checksum": None,
+                "title": "A Wizard of Earthsea",
+                "authors": "Ursula K. Le Guin",
+                "status": "reading",
+                "percent_finished": 0.25,
+                "status_modified": "2026-06-01",
+                "highlight_count": 0,
+                "note_count": 0,
+                "series": "Earthsea",
+                "series_index": 1,
+                "language": "en",
+            }
+        ],
+    )
+
+    dashboard = build_dashboard(db_path, snapshot)
+    matched = next(book for book in dashboard["books"] if book["title"] == "A Wizard of Earthsea")
+    unmatched = next(book for book in dashboard["books"] if book["title"] == "The Left Hand of Darkness")
+
+    assert matched["status"] == "reading"
+    assert matched["progress"] == 25
+    assert unmatched["status"] is None
+    assert unmatched["metadata_available"] is False
+    assert unmatched["progress"] == 9
+
+
+def test_missing_sidecar_status_uses_page_progress_for_summary_counts(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_current_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE page_stat_data SET page = 180 WHERE id_book = 1")
+
+    dashboard = build_dashboard(db_path)
+
+    assert dashboard["summary"]["finished_books"] == 1
+    assert dashboard["summary"]["reading_books"] == 1
+    assert dashboard["summary"]["abandoned_books"] == 0
+
+
+def test_duplicate_md5_sidecars_are_treated_as_ambiguous(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_duplicate_books_db(db_path)
+    snapshot = write_sidecar_snapshot(
+        db_path,
+        [
+            {
+                "partial_md5_checksum": "c1",
+                "title": "Title Clash",
+                "authors": "Author One",
+                "status": "complete",
+                "percent_finished": 1,
+                "status_modified": "2026-06-10",
+            },
+            {
+                "partial_md5_checksum": "c1",
+                "title": "Title Clash",
+                "authors": "Author One",
+                "status": "abandoned",
+                "percent_finished": 0.2,
+                "status_modified": "2026-06-11",
+            },
+        ],
+    )
+
+    book = next(
+        item
+        for item in build_dashboard(db_path, snapshot)["books"]
+        if item["authors"] == "Author One"
+    )
+
+    assert book["status"] is None
+    assert book["percent_finished"] is None
+    assert book["metadata_available"] is False
+
+
+def test_merged_books_select_latest_sidecar_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_duplicate_books_db(db_path)
+    snapshot = write_sidecar_snapshot(
+        db_path,
+        [
+            {
+                "partial_md5_checksum": "aaa",
+                "title": "Merged Work",
+                "authors": "Same Author",
+                "status": "complete",
+                "percent_finished": 1,
+                "status_modified": "2026-05-01",
+                "highlight_count": 8,
+                "note_count": 0,
+            },
+            {
+                "partial_md5_checksum": "bbb",
+                "title": "Merged Work",
+                "authors": "Same Author",
+                "status": "reading",
+                "percent_finished": 0.6,
+                "status_modified": "2026-06-01",
+                "highlight_count": 2,
+                "note_count": 0,
+            },
+        ],
+    )
+
+    merged = next(book for book in build_dashboard(db_path, snapshot)["books"] if book["title"] == "Merged Work")
+
+    assert merged["status"] == "reading"
+    assert merged["progress"] == 60
+    assert merged["highlight_count"] == 2
 
 
 def test_unsupported_schema_reports_clear_error(tmp_path: Path) -> None:

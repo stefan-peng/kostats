@@ -14,6 +14,10 @@ const emptyDashboard = {
     books: 0,
     pages: 0,
     current_streak: 0,
+    finished_books: 0,
+    reading_books: 0,
+    abandoned_books: 0,
+    highlights: 0,
   },
   charts: {
     daily: [],
@@ -88,6 +92,10 @@ const populatedDashboard = {
     books: 1,
     pages: 8,
     current_streak: 2,
+    finished_books: 1,
+    reading_books: 1,
+    abandoned_books: 0,
+    highlights: 2,
   },
   charts: {
     daily: [{ date: "2026-05-30", label: "May 30", minutes: 90 }],
@@ -107,6 +115,15 @@ const populatedDashboard = {
       max_page: 80,
       total_pages: 200,
       progress: 40,
+      percent_finished: 0.4,
+      status: "reading",
+      status_modified: "2026-05-31",
+      highlight_count: 2,
+      note_count: 0,
+      series: "",
+      series_index: null,
+      language: "en",
+      metadata_available: true,
       source_book_ids: ["1", "4"],
       source_md5s: ["piranesi-a", "piranesi-b"],
       merged_count: 2,
@@ -122,6 +139,15 @@ const populatedDashboard = {
       max_page: 180,
       total_pages: 180,
       progress: 100,
+      percent_finished: 0.75,
+      status: "complete",
+      status_modified: "2026-05-28",
+      highlight_count: 0,
+      note_count: 0,
+      series: "Earthsea Cycle",
+      series_index: 1,
+      language: "en",
+      metadata_available: true,
       source_book_ids: ["2"],
       source_md5s: ["earthsea-md5"],
       merged_count: 1,
@@ -136,7 +162,16 @@ const populatedDashboard = {
       pages: 2,
       max_page: null,
       total_pages: null,
-      progress: null,
+      progress: 20,
+      percent_finished: null,
+      status: null,
+      status_modified: null,
+      highlight_count: 0,
+      note_count: 0,
+      series: "",
+      series_index: null,
+      language: "",
+      metadata_available: false,
       source_book_ids: ["3"],
       source_md5s: [],
       merged_count: 1,
@@ -154,6 +189,15 @@ const populatedDashboard = {
       max_page: 80,
       total_pages: 200,
       progress: 40,
+      percent_finished: 0.4,
+      status: "reading",
+      status_modified: "2026-05-31",
+      highlight_count: 2,
+      note_count: 0,
+      series: "",
+      series_index: null,
+      language: "en",
+      metadata_available: true,
       source_book_ids: ["1", "4"],
       source_md5s: ["piranesi-a", "piranesi-b"],
       merged_count: 2,
@@ -571,11 +615,21 @@ describe("App", () => {
     expect(screen.queryByText("Piranesi")).not.toBeInTheDocument();
 
     await userEvent.clear(screen.getByLabelText("Search"));
-    await userEvent.selectOptions(screen.getByLabelText("Progress"), "unknown");
+    await userEvent.selectOptions(screen.getByLabelText("Status"), "finished");
+    expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
+    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.queryByText("Piranesi")).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Status"), "reading");
+    expect(screen.getByText("Piranesi")).toBeInTheDocument();
     expect(screen.getByText("Notes on a Small Planet")).toBeInTheDocument();
     expect(screen.queryByText("A Wizard of Earthsea")).not.toBeInTheDocument();
 
-    await userEvent.selectOptions(screen.getByLabelText("Progress"), "all");
+    await userEvent.selectOptions(screen.getByLabelText("Status"), "unknown");
+    expect(screen.queryByText("Notes on a Small Planet")).not.toBeInTheDocument();
+    expect(screen.queryByText("A Wizard of Earthsea")).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Status"), "all");
     await userEvent.selectOptions(screen.getByLabelText("Sort"), "title");
     await userEvent.click(screen.getByRole("button", { name: "Descending" }));
     const rows = within(screen.getByRole("table")).getAllByRole("row");
@@ -801,7 +855,8 @@ describe("App", () => {
     expect(clickSpy).toHaveBeenCalledTimes(2);
     const csvBlob = vi.mocked(URL.createObjectURL).mock.calls[1][0] as Blob;
     const csv = await readBlobText(csvBlob);
-    expect(csv).toContain("Records,Source book IDs");
+    expect(csv).toContain("Notes,Records,Source book IDs");
+    expect(csv).toContain("Earthsea Cycle,1,en,Finished");
     expect(csv).toContain("2,1; 4");
   });
 });
