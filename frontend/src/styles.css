@@ -629,15 +629,23 @@ dd {
   -webkit-overflow-scrolling: touch;
 }
 
-.book-table-wrap {
+.viewport-table-wrap {
   overflow-y: auto;
   scrollbar-gutter: auto;
 }
 
-.book-table-wrap th {
+.viewport-table-wrap table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.viewport-table-wrap thead {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
+  background: var(--tile-bg);
+  box-shadow: 0 1px 0 var(--line);
+  isolation: isolate;
 }
 
 table {

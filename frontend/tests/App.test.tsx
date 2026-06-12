@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
@@ -586,6 +586,8 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Snapshots/i }));
     expect(screen.getByRole("heading", { name: "Snapshots" })).toBeInTheDocument();
     expect(screen.getAllByText("20260531T120000Z").length).toBeGreaterThan(0);
+    expect(screen.getByRole("table").parentElement).toHaveClass("table-wrap", "viewport-table-wrap");
+    expect(screen.getByRole("region", { name: "Snapshots table" })).toHaveAttribute("tabindex", "0");
 
     await userEvent.click(screen.getByRole("button", { name: /Calendar/i }));
     expect(screen.getByRole("heading", { name: "Calendar" })).toBeInTheDocument();
@@ -622,15 +624,24 @@ describe("App", () => {
 
     render(<App />);
 
-    const expectedTableMaxHeight = `${window.innerHeight - 32}px`;
+    const expectedTableMaxHeight = `${window.innerHeight - 53}px`;
     const recentBooksTable = await screen.findByRole("table");
-    expect(recentBooksTable.parentElement).toHaveClass("table-wrap", "book-table-wrap");
+    expect(recentBooksTable.parentElement).toHaveClass("table-wrap", "viewport-table-wrap");
     expect(recentBooksTable.parentElement).toHaveStyle({ maxHeight: expectedTableMaxHeight });
+    expect(screen.getByRole("region", { name: "Recent books table" })).toHaveAttribute("tabindex", "0");
 
     await userEvent.click(await screen.findByRole("button", { name: /Books/i }));
     expect(screen.getByRole("heading", { name: "Books" })).toBeInTheDocument();
-    expect(screen.getByRole("table").parentElement).toHaveClass("table-wrap", "book-table-wrap");
+    expect(screen.getByRole("table").parentElement).toHaveClass("table-wrap", "viewport-table-wrap");
     expect(screen.getByRole("table").parentElement).toHaveStyle({ maxHeight: expectedTableMaxHeight });
+    const booksTableRegion = screen.getByRole("region", { name: "Books table" });
+    expect(booksTableRegion).toHaveAttribute("tabindex", "0");
+    Object.defineProperty(booksTableRegion, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(booksTableRegion, "scrollHeight", { configurable: true, value: 1_200 });
+    fireEvent.keyDown(booksTableRegion, { key: "PageDown" });
+    expect(booksTableRegion.scrollTop).toBe(360);
+    fireEvent.keyDown(booksTableRegion, { key: "Home" });
+    expect(booksTableRegion.scrollTop).toBe(0);
     expect(screen.getByText("3 of 3 books")).toBeInTheDocument();
     expect(screen.getByText("3h 40m")).toBeInTheDocument();
     expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
@@ -664,7 +675,7 @@ describe("App", () => {
     expect(within(rows[1]).getByText("A Wizard of Earthsea")).toBeInTheDocument();
   });
 
-  it("keeps the book table within the remaining height of a short viewport", async () => {
+  it("keeps a fixed minimum table height during page scroll without exceeding the viewport", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
         return {
@@ -680,7 +691,7 @@ describe("App", () => {
       return populatedDashboard;
     });
     vi.spyOn(window, "innerHeight", "get").mockReturnValue(375);
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       bottom: 0,
       height: 0,
       left: 0,
@@ -695,7 +706,27 @@ describe("App", () => {
     render(<App />);
 
     const table = await screen.findByRole("table");
-    expect(table.parentElement).toHaveStyle({ maxHeight: "24px" });
+    expect(table.parentElement).toHaveStyle({ maxHeight: "240px" });
+
+    rectSpy.mockReturnValue({
+      bottom: 0,
+      height: 0,
+      left: 0,
+      right: 0,
+      top: 100,
+      width: 0,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    act(() => window.dispatchEvent(new Event("scroll")));
+
+    expect(table.parentElement).toHaveStyle({ maxHeight: "240px" });
+
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(200);
+    act(() => window.dispatchEvent(new Event("resize")));
+
+    expect(table.parentElement).toHaveStyle({ maxHeight: "147px" });
   });
 
   it("keeps sparse page panels from stretching to fill the viewport", async () => {

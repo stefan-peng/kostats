@@ -1,5 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   autoImportFromKobo,
@@ -26,6 +26,10 @@ import type {
 type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "export" | "settings";
 type BookSortKey = "last_open" | "time_seconds" | "pages" | "progress" | "title";
 type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
+
+const tableViewportSideInset = 16;
+const tableViewportBottomInset = 37;
+const tableMinimumHeight = 240;
 
 const emptyDashboard: Dashboard = {
   has_data: false,
@@ -520,34 +524,71 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
   );
 }
 
-function ViewportTableScrollArea({ children, className = "" }: { children: ReactNode; className?: string }) {
+function ViewportTableScrollArea({
+  ariaLabel,
+  children,
+  className = "",
+}: {
+  ariaLabel: string;
+  children: ReactNode;
+  className?: string;
+}) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [maxHeight, setMaxHeight] = useState<number>();
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const content = event.currentTarget;
+    const pageStep = Math.max(40, content.clientHeight - 40);
+    const scrollSteps: Partial<Record<string, number>> = {
+      ArrowDown: 40,
+      ArrowUp: -40,
+      PageDown: pageStep,
+      PageUp: -pageStep,
+    };
+
+    if (event.key === "Home") {
+      content.scrollTop = 0;
+    } else if (event.key === "End") {
+      content.scrollTop = content.scrollHeight;
+    } else if (scrollSteps[event.key] != null) {
+      content.scrollTop += scrollSteps[event.key] ?? 0;
+    } else {
+      return;
+    }
+    event.preventDefault();
+  }
 
   useLayoutEffect(() => {
     const content = contentRef.current;
     if (!content) return;
 
     const updateMaxHeight = () => {
-      const availableHeight = window.innerHeight - Math.max(content.getBoundingClientRect().top, 16) - 16;
-      setMaxHeight(Math.max(0, availableHeight));
+      const documentTop = content.getBoundingClientRect().top + window.scrollY;
+      const availableHeight =
+        window.innerHeight - Math.max(documentTop, tableViewportSideInset) - tableViewportBottomInset;
+      const viewportCap = Math.max(0, window.innerHeight - tableViewportSideInset - tableViewportBottomInset);
+      // Prefer a usable minimum even when it requires page scrolling, but keep the table short enough
+      // to fit entirely within the viewport once the user scrolls it into view.
+      setMaxHeight(Math.min(Math.max(tableMinimumHeight, availableHeight), viewportCap));
     };
 
     updateMaxHeight();
     window.addEventListener("resize", updateMaxHeight);
-    window.addEventListener("scroll", updateMaxHeight);
 
     return () => {
       window.removeEventListener("resize", updateMaxHeight);
-      window.removeEventListener("scroll", updateMaxHeight);
     };
   }, []);
 
   return (
     <div
+      aria-label={ariaLabel}
       className={`table-wrap${className ? ` ${className}` : ""}`}
+      onKeyDown={handleKeyDown}
       ref={contentRef}
+      role="region"
       style={maxHeight == null ? undefined : { maxHeight }}
+      tabIndex={0}
     >
       {children}
     </div>
@@ -560,7 +601,7 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
       <header>
         <h3>Recent books</h3>
       </header>
-      <ViewportTableScrollArea className="book-table-wrap">
+      <ViewportTableScrollArea ariaLabel="Recent books table" className="viewport-table-wrap">
         <table className="data-table recent-books-table">
           <colgroup>
             <col className="book-col" />
@@ -715,7 +756,7 @@ function BooksView({ books }: { books: BookStats[] }) {
           {sortDirection === "asc" ? "Ascending" : "Descending"}
         </button>
       </div>
-      <ViewportTableScrollArea className="book-table-wrap">
+      <ViewportTableScrollArea ariaLabel="Books table" className="viewport-table-wrap">
         <table className="data-table books-table">
           <colgroup>
             <col className="book-col" />
@@ -849,7 +890,7 @@ function SnapshotsView({
       <header>
         <h3>Snapshots</h3>
       </header>
-      <div className="table-wrap">
+      <ViewportTableScrollArea ariaLabel="Snapshots table" className="viewport-table-wrap">
         <table className="data-table snapshots-table">
           <colgroup>
             <col className="imported-col" />
@@ -904,7 +945,7 @@ function SnapshotsView({
             )}
           </tbody>
         </table>
-      </div>
+      </ViewportTableScrollArea>
     </section>
   );
 }
