@@ -622,8 +622,15 @@ describe("App", () => {
 
     render(<App />);
 
+    const expectedTableMaxHeight = `${window.innerHeight - 32}px`;
+    const recentBooksTable = await screen.findByRole("table");
+    expect(recentBooksTable.parentElement).toHaveClass("table-wrap", "book-table-wrap");
+    expect(recentBooksTable.parentElement).toHaveStyle({ maxHeight: expectedTableMaxHeight });
+
     await userEvent.click(await screen.findByRole("button", { name: /Books/i }));
     expect(screen.getByRole("heading", { name: "Books" })).toBeInTheDocument();
+    expect(screen.getByRole("table").parentElement).toHaveClass("table-wrap", "book-table-wrap");
+    expect(screen.getByRole("table").parentElement).toHaveStyle({ maxHeight: expectedTableMaxHeight });
     expect(screen.getByText("3 of 3 books")).toBeInTheDocument();
     expect(screen.getByText("3h 40m")).toBeInTheDocument();
     expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
@@ -655,6 +662,40 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: "Descending" }));
     const rows = within(screen.getByRole("table")).getAllByRole("row");
     expect(within(rows[1]).getByText("A Wizard of Earthsea")).toBeInTheDocument();
+  });
+
+  it("keeps the book table within the remaining height of a short viewport", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(375);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      bottom: 0,
+      height: 0,
+      left: 0,
+      right: 0,
+      top: 335,
+      width: 0,
+      x: 0,
+      y: 335,
+      toJSON: () => ({}),
+    });
+
+    render(<App />);
+
+    const table = await screen.findByRole("table");
+    expect(table.parentElement).toHaveStyle({ maxHeight: "24px" });
   });
 
   it("keeps sparse page panels from stretching to fill the viewport", async () => {

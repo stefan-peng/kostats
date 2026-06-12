@@ -520,13 +520,47 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
   );
 }
 
+function ViewportTableScrollArea({ children, className = "" }: { children: ReactNode; className?: string }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [maxHeight, setMaxHeight] = useState<number>();
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+
+    const updateMaxHeight = () => {
+      const availableHeight = window.innerHeight - Math.max(content.getBoundingClientRect().top, 16) - 16;
+      setMaxHeight(Math.max(0, availableHeight));
+    };
+
+    updateMaxHeight();
+    window.addEventListener("resize", updateMaxHeight);
+    window.addEventListener("scroll", updateMaxHeight);
+
+    return () => {
+      window.removeEventListener("resize", updateMaxHeight);
+      window.removeEventListener("scroll", updateMaxHeight);
+    };
+  }, []);
+
+  return (
+    <div
+      className={`table-wrap${className ? ` ${className}` : ""}`}
+      ref={contentRef}
+      style={maxHeight == null ? undefined : { maxHeight }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
   return (
     <section className="recent-panel">
       <header>
         <h3>Recent books</h3>
       </header>
-      <div className="table-wrap">
+      <ViewportTableScrollArea className="book-table-wrap">
         <table className="data-table recent-books-table">
           <colgroup>
             <col className="book-col" />
@@ -583,7 +617,7 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
             )}
           </tbody>
         </table>
-      </div>
+      </ViewportTableScrollArea>
     </section>
   );
 }
@@ -681,7 +715,7 @@ function BooksView({ books }: { books: BookStats[] }) {
           {sortDirection === "asc" ? "Ascending" : "Descending"}
         </button>
       </div>
-      <div className="table-wrap">
+      <ViewportTableScrollArea className="book-table-wrap">
         <table className="data-table books-table">
           <colgroup>
             <col className="book-col" />
@@ -749,7 +783,7 @@ function BooksView({ books }: { books: BookStats[] }) {
             )}
           </tbody>
         </table>
-      </div>
+      </ViewportTableScrollArea>
     </section>
   );
 }

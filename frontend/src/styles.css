@@ -629,6 +629,17 @@ dd {
   -webkit-overflow-scrolling: touch;
 }
 
+.book-table-wrap {
+  overflow-y: auto;
+  scrollbar-gutter: auto;
+}
+
+.book-table-wrap th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
