@@ -397,6 +397,55 @@ describe("App", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent("Piranesi1h 30m");
   });
 
+  it("limits daily bars and labels to the available chart width", async () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      bottom: 0,
+      height: 210,
+      left: 0,
+      right: 327,
+      top: 0,
+      width: 327,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    const daily = Array.from({ length: 20 }, (_, index) => ({
+      date: `2026-05-${String(index + 1).padStart(2, "0")}`,
+      label: `Day ${index + 1}`,
+      minutes: index + 1,
+    }));
+
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return {
+        ...populatedDashboard,
+        charts: { ...populatedDashboard.charts, daily },
+      };
+    });
+
+    render(<App />);
+
+    const chart = await screen.findByRole("img", { name: "Daily reading chart" });
+    await waitFor(() => expect(chart.querySelectorAll(".bar-column")).toHaveLength(15));
+    expect(within(chart).queryByLabelText("Day 5: 5m")).not.toBeInTheDocument();
+    expect(within(chart).getByLabelText("Day 6: 6m")).toBeInTheDocument();
+    expect(
+      Array.from(chart.querySelectorAll(".show-label"), (label) => label.textContent),
+    ).toEqual(["Day 6", "Day 11", "Day 16", "Day 20"]);
+  });
+
   it("shows calendar heatmap values on hover", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
@@ -965,8 +1014,14 @@ describe("App", () => {
     render(<App />);
     await userEvent.click(await screen.findByRole("button", { name: /Backups/i }));
 
-    expect(screen.getByText("Contains credentials")).toBeInTheDocument();
-    expect(screen.getByText("sidecar files")).toBeInTheDocument();
+    const backupCard = screen.getByRole("article", { name: /Recovery backup/i });
+    expect(within(backupCard).getByText("Contains credentials")).toBeInTheDocument();
+    expect(within(backupCard).getByText("sidecar files")).toBeInTheDocument();
+    expect(backupCard.querySelector(".backup-card-main")).toBeInTheDocument();
+    expect(backupCard.querySelector(".backup-counts")).toBeInTheDocument();
+    expect(within(backupCard).getByRole("button", { name: "Restore" })).toHaveClass(
+      "backup-card-action",
+    );
     await userEvent.click(screen.getByRole("button", { name: /Back up now/i }));
     await userEvent.click(screen.getByRole("button", { name: "Restore" }));
 

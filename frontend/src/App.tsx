@@ -30,6 +30,9 @@ type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknow
 const tableViewportSideInset = 16;
 const tableViewportBottomInset = 37;
 const tableMinimumHeight = 240;
+const chartColumnGap = 4;
+const dailyBarMinimumWidth = 18;
+const chartLabelMinimumSpacing = 72;
 
 const emptyDashboard: Dashboard = {
   has_data: false,
@@ -71,6 +74,61 @@ type CalendarCell = {
   date: string;
   day: CalendarDay | null;
 };
+
+function chartItemLimit(width: number, minimumItemWidth: number) {
+  if (width <= 0) return Number.POSITIVE_INFINITY;
+  return Math.max(1, Math.floor((width + chartColumnGap) / (minimumItemWidth + chartColumnGap)));
+}
+
+function chartLabelIndexes(itemCount: number, width: number) {
+  if (itemCount <= 0) return new Set<number>();
+  if (itemCount === 1 || width <= 0) return new Set([0]);
+
+  const maximumLabels = Math.max(2, Math.floor(width / chartLabelMinimumSpacing));
+  if (itemCount <= maximumLabels) {
+    return new Set(Array.from({ length: itemCount }, (_, index) => index));
+  }
+
+  const step = Math.ceil((itemCount - 1) / (maximumLabels - 1));
+  const indexes = new Set<number>();
+  for (let index = 0; index < itemCount - 1; index += step) {
+    indexes.add(index);
+  }
+  indexes.add(itemCount - 1);
+  return indexes;
+}
+
+function useElementWidth<T extends HTMLElement>(active: boolean) {
+  const ref = useRef<T>(null);
+  const [width, setWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+
+    const updateWidth = (nextWidth = element.getBoundingClientRect().width) => {
+      const roundedWidth = Math.round(nextWidth);
+      if (roundedWidth > 0) {
+        setWidth((currentWidth) => (currentWidth === roundedWidth ? currentWidth : roundedWidth));
+      }
+    };
+
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") {
+      const handleResize = () => updateWidth();
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      updateWidth(entries[0]?.contentRect.width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [active]);
+
+  return { ref, width };
+}
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "Never";
@@ -454,13 +512,20 @@ function VerticalBars({
   data,
   valueKey,
   formatValue,
+  minimumItemWidth,
 }: {
   title: string;
   data: Array<Record<string, string | number>>;
   valueKey: string;
   formatValue: (value: number) => string;
+  minimumItemWidth?: number;
 }) {
-  const max = Math.max(1, ...data.map((item) => Number(item[valueKey])));
+  const { ref: chartRef, width: chartWidth } = useElementWidth<HTMLDivElement>(data.length > 0);
+  const itemLimit =
+    minimumItemWidth == null ? Number.POSITIVE_INFINITY : chartItemLimit(chartWidth, minimumItemWidth);
+  const visibleData = data.slice(-itemLimit);
+  const visibleLabels = chartLabelIndexes(visibleData.length, chartWidth);
+  const max = Math.max(1, ...visibleData.map((item) => Number(item[valueKey])));
   return (
     <section className="chart-panel">
       <header>
@@ -469,8 +534,8 @@ function VerticalBars({
       {data.length === 0 ? (
         <div className="empty-chart">No reading data yet</div>
       ) : (
-        <div className="bar-chart" role="img" aria-label={`${title} chart`}>
-          {data.map((item) => {
+        <div className="bar-chart" ref={chartRef} role="img" aria-label={`${title} chart`}>
+          {visibleData.map((item, index) => {
             const value = Number(item[valueKey]);
             const label = String(item.label);
             return (
@@ -481,7 +546,7 @@ function VerticalBars({
                   className="bar"
                   style={{ height: `${Math.max(4, (value / max) * 100)}%` }}
                 />
-                <small>{label}</small>
+                <small className={visibleLabels.has(index) ? "show-label" : undefined}>{label}</small>
               </div>
             );
           })}
@@ -861,6 +926,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
           data={dashboard.charts.daily}
           valueKey="minutes"
           formatValue={(minutes) => formatDurationLabel(minutes * 60)}
+          minimumItemWidth={dailyBarMinimumWidth}
         />
         <VerticalBars
           title="Monthly reading"
@@ -1058,7 +1124,11 @@ function BackupsView({
           <div className="empty-row">No recovery backups have been created yet.</div>
         ) : (
           backups.map((backup) => (
-            <article className="backup-card" key={backup.id}>
+            <article
+              aria-label={`Recovery backup ${formatDateTime(backup.created_at)}`}
+              className="backup-card"
+              key={backup.id}
+            >
               <div className="backup-card-main">
                 <div>
                   <strong>{formatDateTime(backup.created_at)}</strong>
@@ -1074,7 +1144,7 @@ function BackupsView({
               </div>
               <BackupCounts counts={backup.counts} />
               <button
-                className="table-action"
+                className="table-action backup-card-action"
                 disabled={busy || loadingPreview || !device?.mounted}
                 onClick={() => previewBackup(backup.id)}
               >
