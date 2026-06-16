@@ -439,11 +439,62 @@ describe("App", () => {
 
     const chart = await screen.findByRole("img", { name: "Daily reading chart" });
     await waitFor(() => expect(chart.querySelectorAll(".bar-column")).toHaveLength(15));
+    expect(chart).toHaveStyle({ "--bar-column-width": "18px" });
     expect(within(chart).queryByLabelText("Day 5: 5m")).not.toBeInTheDocument();
     expect(within(chart).getByLabelText("Day 6: 6m")).toBeInTheDocument();
     expect(
       Array.from(chart.querySelectorAll(".show-label"), (label) => label.textContent),
     ).toEqual(["Day 6", "Day 11", "Day 16", "Day 20"]);
+  });
+
+  it("shows as many monthly bars as fit without stretching sparse data", async () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      bottom: 0,
+      height: 210,
+      left: 0,
+      right: 224,
+      top: 0,
+      width: 224,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    const monthly = Array.from({ length: 5 }, (_, index) => ({
+      month: `2026-${String(index + 1).padStart(2, "0")}`,
+      label: `Month ${index + 1}`,
+      hours: index + 1,
+    }));
+
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return {
+        ...populatedDashboard,
+        charts: {
+          ...populatedDashboard.charts,
+          monthly,
+        },
+      };
+    });
+
+    render(<App />);
+
+    const chart = await screen.findByRole("img", { name: "Monthly reading chart" });
+    await waitFor(() => expect(chart.querySelectorAll(".bar-column")).toHaveLength(3));
+    expect(within(chart).queryByLabelText("Month 2: 2h 00m")).not.toBeInTheDocument();
+    expect(within(chart).getByLabelText("Month 3: 3h 00m")).toBeInTheDocument();
+    expect(chart).toHaveStyle({ "--bar-column-width": "72px" });
   });
 
   it("shows calendar heatmap values on hover", async () => {

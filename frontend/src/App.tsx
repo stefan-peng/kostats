@@ -33,6 +33,7 @@ const tableMinimumHeight = 240;
 const chartColumnGap = 4;
 const dailyBarMinimumWidth = 18;
 const chartLabelMinimumSpacing = 72;
+const monthlyBarMinimumWidth = chartLabelMinimumSpacing;
 
 const emptyDashboard: Dashboard = {
   has_data: false,
@@ -521,6 +522,7 @@ function VerticalBars({
   minimumItemWidth?: number;
 }) {
   const { ref: chartRef, width: chartWidth } = useElementWidth<HTMLDivElement>(data.length > 0);
+  const itemWidth = minimumItemWidth ?? dailyBarMinimumWidth;
   const itemLimit =
     minimumItemWidth == null ? Number.POSITIVE_INFINITY : chartItemLimit(chartWidth, minimumItemWidth);
   const visibleData = data.slice(-itemLimit);
@@ -534,7 +536,13 @@ function VerticalBars({
       {data.length === 0 ? (
         <div className="empty-chart">No reading data yet</div>
       ) : (
-        <div className="bar-chart" ref={chartRef} role="img" aria-label={`${title} chart`}>
+        <div
+          className="bar-chart"
+          ref={chartRef}
+          role="img"
+          aria-label={`${title} chart`}
+          style={{ "--bar-column-width": `${itemWidth}px` } as CSSProperties}
+        >
           {visibleData.map((item, index) => {
             const value = Number(item[valueKey]);
             const label = String(item.label);
@@ -933,6 +941,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
           data={dashboard.charts.monthly}
           valueKey="hours"
           formatValue={(hours) => formatDurationLabel(hours * 3600)}
+          minimumItemWidth={monthlyBarMinimumWidth}
         />
         <TopBooksChart data={dashboard.charts.top_books} />
       </section>

@@ -426,7 +426,8 @@ dd {
   height: 210px;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-columns: var(--bar-column-width, 18px);
+  justify-content: end;
   align-items: end;
   gap: 4px;
   padding-top: 10px;
@@ -476,8 +477,8 @@ dd {
 
 .bar {
   align-self: end;
-  justify-self: stretch;
-  width: auto;
+  justify-self: center;
+  width: 100%;
   max-width: 18px;
   min-height: 4px;
   background: linear-gradient(180deg, var(--bar-start), var(--accent));
