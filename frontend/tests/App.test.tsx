@@ -544,6 +544,7 @@ describe("App", () => {
 
     expect(await screen.findByText("Monthly reading")).toBeInTheDocument();
     expect(document.querySelectorAll('[data-slot="chart"]').length).toBeGreaterThan(0);
+    expect(document.querySelectorAll(".recharts-bar-rectangle").length).toBeGreaterThan(0);
   });
 
   it("shows calendar heatmap values on hover", async () => {
@@ -845,10 +846,48 @@ describe("App", () => {
     expect(screen.queryByText("A Wizard of Earthsea")).not.toBeInTheDocument();
 
     await selectRadixOption("Status", "All books");
-    await selectRadixOption("Sort", "Title");
-    await userEvent.click(screen.getByRole("button", { name: "Descending" }));
-    const rows = within(screen.getByRole("table")).getAllByRole("row");
+    const booksTable = screen.getByRole("table");
+    const titleHeader = within(booksTable).getByRole("columnheader", { name: /Title/i });
+    const timeHeader = within(booksTable).getByRole("columnheader", { name: /Time/i });
+    const pagesHeader = within(booksTable).getByRole("columnheader", { name: /Pages seen/i });
+    const progressHeader = within(booksTable).getByRole("columnheader", { name: /Progress/i });
+    const lastOpenedHeader = within(booksTable).getByRole("columnheader", { name: /Last opened/i });
+    expect(lastOpenedHeader).toHaveAttribute("aria-sort", "descending");
+
+    await userEvent.click(within(titleHeader).getByRole("button", { name: /Title/i }));
+    expect(titleHeader).toHaveAttribute("aria-sort", "ascending");
+    let rows = within(booksTable).getAllByRole("row");
     expect(within(rows[1]).getByText("A Wizard of Earthsea")).toBeInTheDocument();
+
+    await userEvent.click(within(titleHeader).getByRole("button", { name: /Title/i }));
+    expect(titleHeader).toHaveAttribute("aria-sort", "descending");
+    rows = within(booksTable).getAllByRole("row");
+    expect(within(rows[1]).getByText("Piranesi")).toBeInTheDocument();
+
+    await userEvent.click(within(timeHeader).getByRole("button", { name: /Time/i }));
+    expect(timeHeader).toHaveAttribute("aria-sort", "ascending");
+    rows = within(booksTable).getAllByRole("row");
+    expect(within(rows[1]).getByText("Notes on a Small Planet")).toBeInTheDocument();
+
+    await userEvent.click(within(timeHeader).getByRole("button", { name: /Time/i }));
+    expect(timeHeader).toHaveAttribute("aria-sort", "descending");
+    rows = within(booksTable).getAllByRole("row");
+    expect(within(rows[1]).getByText("A Wizard of Earthsea")).toBeInTheDocument();
+
+    await userEvent.click(within(pagesHeader).getByRole("button", { name: /Pages seen/i }));
+    expect(pagesHeader).toHaveAttribute("aria-sort", "ascending");
+    rows = within(booksTable).getAllByRole("row");
+    expect(within(rows[1]).getByText("Notes on a Small Planet")).toBeInTheDocument();
+
+    await userEvent.click(within(progressHeader).getByRole("button", { name: /Progress/i }));
+    expect(progressHeader).toHaveAttribute("aria-sort", "ascending");
+    rows = within(booksTable).getAllByRole("row");
+    expect(within(rows[1]).getByText("Notes on a Small Planet")).toBeInTheDocument();
+
+    await userEvent.click(within(lastOpenedHeader).getByRole("button", { name: /Last opened/i }));
+    expect(lastOpenedHeader).toHaveAttribute("aria-sort", "ascending");
+    rows = within(booksTable).getAllByRole("row");
+    expect(within(rows[1]).getByText("Notes on a Small Planet")).toBeInTheDocument();
   });
 
   it("keeps a fixed minimum table height during page scroll without exceeding the viewport", async () => {

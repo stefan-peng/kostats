@@ -1,6 +1,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import {
+  type ColumnDef,
+  type ColumnFiltersState,
+  type Column,
+  type SortingState,
+  flexRender,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import {
   AreaChart,
   Bar,
   BarChart,
@@ -11,6 +22,9 @@ import {
 import { ThemeProvider } from "next-themes";
 import {
   ArchiveRestore,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   BookOpen,
   CalendarDays,
   CheckCircle2,
@@ -137,7 +151,6 @@ import type {
 } from "./types";
 
 type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "export" | "settings";
-type BookSortKey = "last_open" | "time_seconds" | "pages" | "progress" | "title";
 type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
 type NavItem = { id: View; label: string; icon: typeof Home };
 
@@ -187,11 +200,18 @@ type CalendarCell = {
 const chartConfig = {
   minutes: {
     label: "Reading time",
-    color: "var(--chart-2)",
+    color: "var(--chart-1)",
   },
   hours: {
     label: "Reading time",
     color: "var(--chart-2)",
+  },
+} satisfies ChartConfig;
+
+const topBooksChartConfig = {
+  hours: {
+    label: "Hours",
+    color: "var(--chart-3)",
   },
 } satisfies ChartConfig;
 
@@ -359,11 +379,27 @@ function matchesProgressFilter(book: BookStats, filter: BookProgressFilter) {
   return status === filter;
 }
 
-function compareNullableNumbers(a: number | null, b: number | null) {
-  if (a == null && b == null) return 0;
-  if (a == null) return -1;
-  if (b == null) return 1;
-  return a - b;
+function sortableHeader(column: Column<BookStats, unknown>, label: string) {
+  const sorted = column.getIsSorted();
+  const Icon = sorted === "asc" ? ArrowUp : sorted === "desc" ? ArrowDown : ArrowUpDown;
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="-ml-2"
+      onClick={() => column.toggleSorting(sorted === "asc")}
+      type="button"
+    >
+      {label}
+      <Icon data-icon="inline-end" />
+    </Button>
+  );
+}
+
+function ariaSortValue(sort: false | "asc" | "desc") {
+  if (sort === "asc") return "ascending";
+  if (sort === "desc") return "descending";
+  return undefined;
 }
 
 function escapeCsv(value: string | number | null | undefined) {
@@ -559,7 +595,12 @@ function ReadingBarChart({
                   />
                 }
               />
-              <Bar dataKey={valueKey} fill={`var(--color-${valueKey})`} radius={[4, 4, 0, 0]} />
+              <Bar
+                dataKey={valueKey}
+                barSize={valueKey === "hours" ? 28 : 10}
+                fill={`var(--color-${valueKey})`}
+                radius={[4, 4, 0, 0]}
+              />
             </BarChart>
           </ChartContainer>
         )}
@@ -579,7 +620,7 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
         {data.length === 0 ? (
           <EmptyPanel icon={<BookOpen />} title="No books yet" />
         ) : (
-          <ChartContainer config={{ hours: { label: "Hours", color: "var(--chart-2)" } }} className="h-64 w-full">
+          <ChartContainer config={topBooksChartConfig} className="h-64 w-full">
             <BarChart accessibilityLayer data={chartData} layout="vertical" margin={{ left: 4, right: 24, top: 8 }}>
               <CartesianGrid horizontal={false} />
               <XAxis type="number" hide />
@@ -605,7 +646,7 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
                   />
                 }
               />
-              <Bar dataKey="hours" fill="var(--color-hours)" radius={4} />
+              <Bar dataKey="hours" barSize={18} fill="var(--color-hours)" radius={4} />
             </BarChart>
           </ChartContainer>
         )}
@@ -736,38 +777,122 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
 }
 
 function BooksView({ books }: { books: BookStats[] }) {
-  const [query, setQuery] = useState("");
-  const [progressFilter, setProgressFilter] = useState<BookProgressFilter>("all");
-  const [sortKey, setSortKey] = useState<BookSortKey>("last_open");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [globalFilter, setGlobalFilter] = useState("");
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: "last_open", desc: true }]);
 
-  const filteredBooks = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    const sorted = books
-      .filter((book) => {
-        const haystack = `${book.title} ${book.authors} ${book.series} ${book.language}`.toLocaleLowerCase();
-        return (!normalizedQuery || haystack.includes(normalizedQuery)) && matchesProgressFilter(book, progressFilter);
-      })
-      .sort((a, b) => {
-        let result = 0;
-        if (sortKey === "title") {
-          result = a.title.localeCompare(b.title);
-        } else if (sortKey === "last_open") {
-          result = (a.last_open ?? "").localeCompare(b.last_open ?? "");
-        } else if (sortKey === "progress") {
-          result = compareNullableNumbers(a.progress, b.progress);
-        } else {
-          result = a[sortKey] - b[sortKey];
-        }
-        if (result === 0) result = a.title.localeCompare(b.title);
-        return sortDirection === "asc" ? result : -result;
-      });
-    return sorted;
-  }, [books, progressFilter, query, sortDirection, sortKey]);
+  const columns = useMemo<ColumnDef<BookStats>[]>(
+    () => [
+      {
+        accessorKey: "title",
+        header: ({ column }) => sortableHeader(column, "Title"),
+        cell: ({ row }) => (
+          <span className="font-medium" title={row.original.title}>
+            {row.original.title}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "authors",
+        header: "Author",
+        cell: ({ row }) => <span title={row.original.authors}>{row.original.authors}</span>,
+      },
+      {
+        accessorKey: "time_seconds",
+        header: ({ column }) => sortableHeader(column, "Time"),
+        cell: ({ row }) => row.original.time_label,
+      },
+      {
+        accessorKey: "pages",
+        header: ({ column }) => sortableHeader(column, "Pages seen"),
+        cell: ({ row }) => row.original.pages.toLocaleString(),
+      },
+      {
+        id: "position",
+        header: "Position",
+        cell: ({ row }) => formatPageProgress(row.original),
+      },
+      {
+        id: "status",
+        accessorFn: (book) => effectiveStatus(book) ?? "unknown",
+        header: "Status",
+        cell: ({ row }) => (
+          <Badge variant={statusBadgeVariant(row.original)}>{formatStatus(row.original)}</Badge>
+        ),
+        filterFn: (row, _columnId, filterValue) =>
+          matchesProgressFilter(row.original, filterValue as BookProgressFilter),
+        enableSorting: false,
+      },
+      {
+        id: "progress",
+        accessorFn: (book) => book.progress ?? Number.NEGATIVE_INFINITY,
+        header: ({ column }) => sortableHeader(column, "Progress"),
+        cell: ({ row }) => (
+          <div className="flex min-w-32 items-center gap-2">
+            <Progress value={row.original.progress ?? 0} />
+            <span className="w-12 text-xs text-muted-foreground">{formatProgress(row.original)}</span>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "highlight_count",
+        header: "Highlights",
+        cell: ({ row }) => row.original.highlight_count.toLocaleString(),
+      },
+      {
+        id: "last_open",
+        accessorFn: (book) => (book.last_open ? Date.parse(book.last_open) : 0),
+        header: ({ column }) => sortableHeader(column, "Last opened"),
+        cell: ({ row }) => (
+          <span title={formatDateTime(row.original.last_open)}>
+            {formatDateTime(row.original.last_open)}
+          </span>
+        ),
+      },
+      {
+        id: "records",
+        accessorKey: "merged_count",
+        header: "Records",
+        cell: ({ row }) => (
+          <span title={`Book IDs: ${row.original.source_book_ids.join(", ")}`}>
+            {formatSourceRecords(row.original)}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
-  const totalTimeSeconds = filteredBooks.reduce((total, book) => total + book.time_seconds, 0);
-  const totalPages = filteredBooks.reduce((total, book) => total + book.pages, 0);
-  const totalHighlights = filteredBooks.reduce((total, book) => total + book.highlight_count, 0);
+  const table = useReactTable({
+    data: books,
+    columns,
+    state: {
+      sorting,
+      columnFilters,
+      globalFilter,
+    },
+    onSortingChange: setSorting,
+    onColumnFiltersChange: setColumnFilters,
+    onGlobalFilterChange: setGlobalFilter,
+    globalFilterFn: (row, _columnId, filterValue) => {
+      const query = String(filterValue ?? "").trim().toLocaleLowerCase();
+      if (!query) return true;
+      const book = row.original;
+      const haystack = `${book.title} ${book.authors} ${book.series} ${book.language}`.toLocaleLowerCase();
+      return haystack.includes(query);
+    },
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+
+  const filteredRows = table.getFilteredRowModel().rows;
+  const visibleRows = table.getRowModel().rows;
+  const progressFilter =
+    (table.getColumn("status")?.getFilterValue() as BookProgressFilter | undefined) ?? "all";
+  const totalTimeSeconds = filteredRows.reduce((total, row) => total + row.original.time_seconds, 0);
+  const totalPages = filteredRows.reduce((total, row) => total + row.original.pages, 0);
+  const totalHighlights = filteredRows.reduce((total, row) => total + row.original.highlight_count, 0);
 
   return (
     <Card>
@@ -775,7 +900,7 @@ function BooksView({ books }: { books: BookStats[] }) {
         <div>
           <CardTitle>Books</CardTitle>
           <CardDescription>
-            {filteredBooks.length.toLocaleString()} of {books.length.toLocaleString()} books
+            {filteredRows.length.toLocaleString()} of {books.length.toLocaleString()} books
           </CardDescription>
         </div>
         <CardAction className="hidden flex-wrap justify-end gap-2 text-sm text-muted-foreground md:flex" aria-label="Filtered book summary">
@@ -785,7 +910,7 @@ function BooksView({ books }: { books: BookStats[] }) {
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <FieldGroup className="md:grid-cols-[minmax(220px,1fr)_180px_180px_auto]" aria-label="Book table controls">
+        <FieldGroup className="md:grid-cols-[minmax(220px,1fr)_180px]" aria-label="Book table controls">
           <Field>
             <FieldLabel htmlFor="book-search">Search</FieldLabel>
             <div className="relative">
@@ -793,8 +918,8 @@ function BooksView({ books }: { books: BookStats[] }) {
               <Input
                 id="book-search"
                 className="pl-8"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                value={globalFilter}
+                onChange={(event) => setGlobalFilter(event.target.value)}
                 placeholder="Title or author"
                 type="search"
               />
@@ -802,7 +927,12 @@ function BooksView({ books }: { books: BookStats[] }) {
           </Field>
           <Field>
             <FieldLabel htmlFor="book-status">Status</FieldLabel>
-            <Select value={progressFilter} onValueChange={(value) => setProgressFilter(value as BookProgressFilter)}>
+            <Select
+              value={progressFilter}
+              onValueChange={(value) => {
+                table.getColumn("status")?.setFilterValue(value === "all" ? undefined : value);
+              }}
+            >
               <SelectTrigger id="book-status" className="w-full">
                 <SelectValue />
               </SelectTrigger>
@@ -817,77 +947,39 @@ function BooksView({ books }: { books: BookStats[] }) {
               </SelectContent>
             </Select>
           </Field>
-          <Field>
-            <FieldLabel htmlFor="book-sort">Sort</FieldLabel>
-            <Select value={sortKey} onValueChange={(value) => setSortKey(value as BookSortKey)}>
-              <SelectTrigger id="book-sort" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="last_open">Last opened</SelectItem>
-                  <SelectItem value="time_seconds">Reading time</SelectItem>
-                  <SelectItem value="pages">Pages seen</SelectItem>
-                  <SelectItem value="progress">Progress</SelectItem>
-                  <SelectItem value="title">Title</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Button
-            className="self-end"
-            variant="outline"
-            onClick={() => setSortDirection((value) => (value === "asc" ? "desc" : "asc"))}
-            type="button"
-          >
-            {sortDirection === "asc" ? "Ascending" : "Descending"}
-          </Button>
         </FieldGroup>
       </CardContent>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea ariaLabel="Books table">
           <Table className="data-table books-table">
             <TableHeader>
-              <TableRow>
-                <TableHead>Title</TableHead>
-                <TableHead>Author</TableHead>
-                <TableHead>Time</TableHead>
-                <TableHead>Pages seen</TableHead>
-                <TableHead>Position</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Progress</TableHead>
-                <TableHead>Highlights</TableHead>
-                <TableHead>Last opened</TableHead>
-                <TableHead>Records</TableHead>
-              </TableRow>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id} aria-sort={ariaSortValue(header.column.getIsSorted())}>
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              ))}
             </TableHeader>
             <TableBody>
-              {filteredBooks.length === 0 ? (
+              {visibleRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">
                     No books match the current filters.
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredBooks.map((book) => (
-                  <TableRow key={book.id}>
-                    <TableCell className="font-medium" title={book.title}>{book.title}</TableCell>
-                    <TableCell title={book.authors}>{book.authors}</TableCell>
-                    <TableCell>{book.time_label}</TableCell>
-                    <TableCell>{book.pages.toLocaleString()}</TableCell>
-                    <TableCell>{formatPageProgress(book)}</TableCell>
-                    <TableCell><Badge variant={statusBadgeVariant(book)}>{formatStatus(book)}</Badge></TableCell>
-                    <TableCell>
-                      <div className="flex min-w-32 items-center gap-2">
-                        <Progress value={book.progress ?? 0} />
-                        <span className="w-12 text-xs text-muted-foreground">{formatProgress(book)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>{book.highlight_count.toLocaleString()}</TableCell>
-                    <TableCell title={formatDateTime(book.last_open)}>{formatDateTime(book.last_open)}</TableCell>
-                    <TableCell title={`Book IDs: ${book.source_book_ids.join(", ")}`}>
-                      {formatSourceRecords(book)}
-                    </TableCell>
+                visibleRows.map((row) => (
+                  <TableRow key={row.id}>
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
                   </TableRow>
                 ))
               )}
