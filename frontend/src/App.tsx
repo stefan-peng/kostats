@@ -153,6 +153,7 @@ import type {
 type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "export" | "settings";
 type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
 type NavItem = { id: View; label: string; icon: typeof Home };
+type ReadingDateFilter = { date: string; bookIds: string[] };
 
 const tableViewportSideInset = 16;
 const tableViewportBottomInset = 37;
@@ -776,10 +777,23 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
   );
 }
 
-function BooksView({ books }: { books: BookStats[] }) {
+function BooksView({
+  books,
+  readingDate,
+  onClearReadingDate,
+}: {
+  books: BookStats[];
+  readingDate: ReadingDateFilter | null;
+  onClearReadingDate: () => void;
+}) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [sorting, setSorting] = useState<SortingState>([{ id: "last_open", desc: true }]);
+  const dateFilteredBooks = useMemo(() => {
+    if (!readingDate) return books;
+    const selectedBookIds = new Set(readingDate.bookIds);
+    return books.filter((book) => selectedBookIds.has(book.id));
+  }, [books, readingDate]);
 
   const columns = useMemo<ColumnDef<BookStats>[]>(
     () => [
@@ -864,7 +878,7 @@ function BooksView({ books }: { books: BookStats[] }) {
   );
 
   const table = useReactTable({
-    data: books,
+    data: dateFilteredBooks,
     columns,
     state: {
       sorting,
@@ -893,6 +907,14 @@ function BooksView({ books }: { books: BookStats[] }) {
   const totalTimeSeconds = filteredRows.reduce((total, row) => total + row.original.time_seconds, 0);
   const totalPages = filteredRows.reduce((total, row) => total + row.original.pages, 0);
   const totalHighlights = filteredRows.reduce((total, row) => total + row.original.highlight_count, 0);
+  const readingDateLabel = readingDate
+    ? parseCalendarDate(readingDate.date).toLocaleDateString(undefined, {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      })
+    : null;
 
   return (
     <Card>
@@ -900,13 +922,21 @@ function BooksView({ books }: { books: BookStats[] }) {
         <div>
           <CardTitle>Books</CardTitle>
           <CardDescription>
-            {filteredRows.length.toLocaleString()} of {books.length.toLocaleString()} books
+            {readingDateLabel ? `Reading on ${readingDateLabel} · ` : ""}
+            {filteredRows.length.toLocaleString()} of {dateFilteredBooks.length.toLocaleString()} books
           </CardDescription>
         </div>
-        <CardAction className="hidden flex-wrap justify-end gap-2 text-sm text-muted-foreground md:flex" aria-label="Filtered book summary">
-          <Badge variant="outline">{formatDurationLabel(totalTimeSeconds)} total</Badge>
-          <Badge variant="outline">{totalPages.toLocaleString()} pages seen</Badge>
-          <Badge variant="outline">{totalHighlights.toLocaleString()} highlights</Badge>
+        <CardAction className="flex flex-wrap justify-end gap-2 text-sm text-muted-foreground" aria-label="Filtered book summary">
+          {readingDate ? (
+            <Button variant="outline" size="sm" onClick={onClearReadingDate}>
+              Clear date
+            </Button>
+          ) : null}
+          <div className="hidden flex-wrap justify-end gap-2 md:flex">
+            <Badge variant="outline">{formatDurationLabel(totalTimeSeconds)} total</Badge>
+            <Badge variant="outline">{totalPages.toLocaleString()} pages seen</Badge>
+            <Badge variant="outline">{totalHighlights.toLocaleString()} highlights</Badge>
+          </div>
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -1332,7 +1362,13 @@ function BackupsView({
   );
 }
 
-function CalendarView({ calendar }: { calendar: Dashboard["charts"]["calendar"] }) {
+function CalendarView({
+  calendar,
+  onSelectDate,
+}: {
+  calendar: Dashboard["charts"]["calendar"];
+  onSelectDate: (day: CalendarDay) => void;
+}) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { cells, weeks, monthLabels, startDate, endDate, totalDays, maxMinutes } = useMemo(
     () => buildCalendarCells(calendar),
@@ -1408,22 +1444,41 @@ function CalendarView({ calendar }: { calendar: Dashboard["charts"]["calendar"] 
                   });
                   const day = cell.day;
                   const cellLabel = day
-                    ? `${label}: ${day.time_label} read, intensity ${day.level} of 4`
+                    ? `${label}: ${day.time_label} read, intensity ${day.level} of 4. View ${day.book_ids.length.toLocaleString()} ${day.book_ids.length === 1 ? "book" : "books"}`
                     : `${label}: no reading`;
                   return (
                     <Tooltip key={cell.date}>
                       <TooltipTrigger asChild>
-                        <span
-                          role="gridcell"
-                          aria-label={cellLabel}
-                          tabIndex={-1}
-                          className={cn("calendar-day", `level-${day?.level ?? 0}`)}
-                        />
+                        {day ? (
+                          <span role="gridcell">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-xs"
+                              aria-label={cellLabel}
+                              className={cn("calendar-day", `level-${day.level}`)}
+                              onClick={() => onSelectDate(day)}
+                            />
+                          </span>
+                        ) : (
+                          <span
+                            role="gridcell"
+                            aria-label={cellLabel}
+                            tabIndex={-1}
+                            className="calendar-day level-0"
+                          />
+                        )}
                       </TooltipTrigger>
                       <TooltipContent>
                         <div className="grid gap-1">
                           <span>{label}</span>
                           <strong>{day ? `${day.time_label} read` : "No reading"}</strong>
+                          {day ? (
+                            <span>
+                              View {day.book_ids.length.toLocaleString()}{" "}
+                              {day.book_ids.length === 1 ? "book" : "books"}
+                            </span>
+                          ) : null}
                         </div>
                       </TooltipContent>
                     </Tooltip>
@@ -1602,6 +1657,7 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [backups, setBackups] = useState<RecoveryBackup[]>([]);
   const [activeView, setActiveView] = useState<View>("dashboard");
+  const [readingDateFilter, setReadingDateFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoImportError, setAutoImportError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1642,6 +1698,7 @@ export default function App() {
       const selectedDashboard = await getDashboard(snapshotId);
       selectedSnapshotId.current = snapshotId;
       setDashboard(selectedDashboard);
+      setReadingDateFilter(null);
       setActiveView("dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load snapshot");
@@ -1666,6 +1723,7 @@ export default function App() {
       const result = await importFromKobo();
       selectedSnapshotId.current = null;
       setDashboard(result.dashboard);
+      setReadingDateFilter(null);
       setActiveView("dashboard");
       await refresh();
       toast.success("Imported from Kobo");
@@ -1685,6 +1743,7 @@ export default function App() {
       const result = await uploadDatabase(file);
       selectedSnapshotId.current = null;
       setDashboard(result.dashboard);
+      setReadingDateFilter(null);
       setActiveView("dashboard");
       await refresh();
       toast.success("Database uploaded");
@@ -1732,6 +1791,14 @@ export default function App() {
 
   const latestSnapshot = snapshots[0] ?? dashboard.snapshot ?? null;
   const activeSnapshot = dashboard.snapshot ?? latestSnapshot;
+  const selectedReadingDate = useMemo<ReadingDateFilter | null>(() => {
+    if (!readingDateFilter) return null;
+    const day = dashboard.charts.calendar.days.find((item) => item.date === readingDateFilter);
+    return {
+      date: readingDateFilter,
+      bookIds: day?.book_ids ?? [],
+    };
+  }, [dashboard.charts.calendar.days, readingDateFilter]);
   const navItems: NavItem[] = [
     { id: "dashboard", label: "Dashboard", icon: Home },
     { id: "snapshots", label: "Snapshots", icon: Database },
@@ -1741,6 +1808,15 @@ export default function App() {
     { id: "export", label: "Export", icon: FileUp },
     { id: "settings", label: "Settings", icon: Settings },
   ];
+  function selectView(view: View) {
+    if (view === "books") setReadingDateFilter(null);
+    setActiveView(view);
+  }
+
+  function selectCalendarDate(day: CalendarDay) {
+    setReadingDateFilter(day.date);
+    setActiveView("books");
+  }
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
@@ -1756,7 +1832,7 @@ export default function App() {
           <SidebarContent>
             <SidebarGroup>
               <SidebarGroupContent>
-                <AppSidebarNav items={navItems} activeView={activeView} onSelect={setActiveView} />
+                <AppSidebarNav items={navItems} activeView={activeView} onSelect={selectView} />
               </SidebarGroupContent>
             </SidebarGroup>
           </SidebarContent>
@@ -1817,8 +1893,19 @@ export default function App() {
                 onRestore={handleRestore}
               />
             ) : null}
-            {activeView === "books" ? <BooksView books={dashboard.books} /> : null}
-            {activeView === "calendar" ? <CalendarView calendar={dashboard.charts.calendar} /> : null}
+            {activeView === "books" ? (
+              <BooksView
+                books={dashboard.books}
+                readingDate={selectedReadingDate}
+                onClearReadingDate={() => setReadingDateFilter(null)}
+              />
+            ) : null}
+            {activeView === "calendar" ? (
+              <CalendarView
+                calendar={dashboard.charts.calendar}
+                onSelectDate={selectCalendarDate}
+              />
+            ) : null}
             {activeView === "export" ? <ExportView dashboard={dashboard} /> : null}
             {activeView === "settings" ? (
               <SettingsView device={device} snapshots={snapshots} onRefresh={() => refresh().catch((err: Error) => setError(err.message))} />

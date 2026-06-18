@@ -248,6 +248,7 @@ def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     assert len(dashboard["charts"]["daily"]) == 3
     assert dashboard["charts"]["calendar"]["total_days"] == 3
     assert dashboard["charts"]["calendar"]["days"][0]["date"] == "2026-01-31"
+    assert dashboard["charts"]["calendar"]["days"][1]["book_ids"] == ["1", "2"]
     assert dashboard["charts"]["calendar"]["days"][-1]["level"] == 1
     assert dashboard["books"][0]["title"] == "The Left Hand of Darkness"
     assert dashboard["books"][0]["time_label"] == "1h 10m"
@@ -330,6 +331,7 @@ def test_calendar_keeps_all_reading_days_with_intensity(tmp_path: Path) -> None:
         "minutes": 1,
         "time_label": "1m",
         "level": 1,
+        "book_ids": ["1"],
     }
     assert calendar["days"][-1]["date"] == "2026-02-04"
     assert calendar["days"][-1]["minutes"] == 35
@@ -361,6 +363,12 @@ def test_duplicate_book_records_merge_conservatively(tmp_path: Path) -> None:
     assert len(dashboard["recent_books"]) == 11
     assert dashboard["summary"]["pages"] == 14
     assert dashboard["charts"]["top_books"][0]["id"] == merged["id"]
+    merged_calendar_days = [
+        day
+        for day in dashboard["charts"]["calendar"]["days"]
+        if day["date"] in {"2026-01-31", "2026-02-01"}
+    ]
+    assert [day["book_ids"] for day in merged_calendar_days] == [[merged["id"]], [merged["id"]]]
     assert merged["id"].startswith("merged:")
     assert merged["time_seconds"] == 1000
     assert merged["time_label"] == "17m"

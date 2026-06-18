@@ -153,6 +153,7 @@ export type Dashboard = {
         minutes: number;
         time_label: string;
         level: 0 | 1 | 2 | 3 | 4;
+        book_ids: string[];
       }>;
     };
   };

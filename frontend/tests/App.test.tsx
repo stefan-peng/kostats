@@ -44,13 +44,20 @@ function readBlobText(blob: Blob) {
   });
 }
 
-function calendarFixture(days: Array<{ date: string; label: string; minutes: number; time_label: string; level: 1 | 2 | 3 | 4 }>) {
+function calendarFixture(days: Array<{
+  date: string;
+  label: string;
+  minutes: number;
+  time_label: string;
+  level: 1 | 2 | 3 | 4;
+  book_ids?: string[];
+}>) {
   return {
     start_date: days[0]?.date ?? null,
     end_date: days.at(-1)?.date ?? null,
     max_minutes: Math.max(0, ...days.map((day) => day.minutes)),
     total_days: days.length,
-    days,
+    days: days.map((day) => ({ ...day, book_ids: day.book_ids ?? [] })),
   };
 }
 
@@ -70,7 +77,14 @@ const fullCalendar = calendarFixture([
   { date: "2026-05-01", label: "May 1, 2026", minutes: 70, time_label: "1h 10m", level: 3 },
   { date: "2026-05-02", label: "May 2, 2026", minutes: 75, time_label: "1h 15m", level: 4 },
   { date: "2026-05-03", label: "May 3, 2026", minutes: 80, time_label: "1h 20m", level: 4 },
-  { date: "2026-05-04", label: "May 4, 2026", minutes: 90, time_label: "1h 30m", level: 4 },
+  {
+    date: "2026-05-04",
+    label: "May 4, 2026",
+    minutes: 90,
+    time_label: "1h 30m",
+    level: 4,
+    book_ids: ["1", "2"],
+  },
 ]);
 
 const populatedDashboard = {
@@ -567,13 +581,51 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
 
     const readingDay = screen.getByLabelText(
-      "Monday, May 4, 2026: 1h 30m read, intensity 4 of 4",
+      "Monday, May 4, 2026: 1h 30m read, intensity 4 of 4. View 2 books",
     );
     await userEvent.hover(readingDay);
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Monday, May 4, 20261h 30m read");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Monday, May 4, 20261h 30m readView 2 books",
+    );
     await userEvent.unhover(readingDay);
 
     expect(screen.getByLabelText("Sunday, June 7, 2026: no reading")).toBeInTheDocument();
+  });
+
+  it("opens Books filtered to the books contributing to a selected calendar day", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+    const readingDayButton = screen.getByRole("button", {
+      name: "Monday, May 4, 2026: 1h 30m read, intensity 4 of 4. View 2 books",
+    });
+    expect(readingDayButton.closest('[role="gridcell"]')).toBeInTheDocument();
+    await userEvent.click(readingDayButton);
+
+    expect(screen.getByText(/Reading on Monday, May 4, 2026/)).toHaveTextContent(
+      "Reading on Monday, May 4, 2026 · 2 of 2 books",
+    );
+    expect(screen.getByText("Piranesi")).toBeInTheDocument();
+    expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
+    expect(screen.queryByText("Notes on a Small Planet")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear date" }));
+    expect(screen.getByText("3 of 3 books")).toBeInTheDocument();
+    expect(screen.getByText("Notes on a Small Planet")).toBeInTheDocument();
   });
 
   it("shows manual fallback when Kobo import fails", async () => {

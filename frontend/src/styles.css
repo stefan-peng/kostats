@@ -196,6 +196,11 @@
   border: 1px solid var(--border);
 }
 
+.calendar-day[data-slot="button"] {
+  padding: 0;
+  cursor: pointer;
+}
+
 .calendar-day.level-1 {
   background: var(--heatmap-1);
 }

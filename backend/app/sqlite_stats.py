@@ -360,6 +360,7 @@ def build_dashboard(
         ).fetchall()
 
     day_seconds: dict[str, float] = defaultdict(float)
+    day_source_book_ids: dict[str, set[str]] = defaultdict(set)
     month_seconds: dict[str, float] = defaultdict(float)
     books: dict[str, dict[str, Any]] = {}
     total_seconds = 0.0
@@ -377,8 +378,10 @@ def build_dashboard(
             continue
 
         book_id = str(row["book_id"])
+        reading_date = started.date().isoformat()
         total_seconds += duration
-        day_seconds[started.date().isoformat()] += duration
+        day_seconds[reading_date] += duration
+        day_source_book_ids[reading_date].add(book_id)
         month_seconds[month_key(started)] += duration
 
         book = books.setdefault(
@@ -470,8 +473,16 @@ def build_dashboard(
         work_groups[merger.find(book_id)].append(book)
 
     book_stats = []
+    merged_book_ids_by_source: dict[str, str] = {}
     for group in work_groups.values():
         source_book_ids = sorted((book["id"] for book in group), key=book_id_sort_key)
+        merged_book_id = (
+            source_book_ids[0]
+            if len(source_book_ids) == 1
+            else stable_merged_book_id(source_book_ids)
+        )
+        for source_book_id in source_book_ids:
+            merged_book_ids_by_source[source_book_id] = merged_book_id
         source_md5s = sorted({book["md5"] for book in group if book["md5"]})
         latest_book = max(group, key=lambda item: (item["last_open_timestamp"], item["id"]))
         matched_sidecars = [book["sidecar"] for book in group if book["sidecar"] is not None]
@@ -496,7 +507,7 @@ def build_dashboard(
         time_seconds = sum(book["time_seconds"] for book in group)
         book_stats.append(
             {
-                "id": source_book_ids[0] if len(source_book_ids) == 1 else stable_merged_book_id(source_book_ids),
+                "id": merged_book_id,
                 "title": latest_book["title"],
                 "authors": latest_book["authors"],
                 "last_open": last_open,
@@ -587,6 +598,13 @@ def build_dashboard(
                         "minutes": seconds_to_minutes(day_seconds[key]),
                         "time_label": format_duration(day_seconds[key]),
                         "level": calendar_level(day_seconds[key], max_day_seconds),
+                        "book_ids": sorted(
+                            {
+                                merged_book_ids_by_source[source_book_id]
+                                for source_book_id in day_source_book_ids[key]
+                            },
+                            key=book_id_sort_key,
+                        ),
                     }
                     for key in sorted_days
                 ],
