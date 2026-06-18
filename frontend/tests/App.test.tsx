@@ -352,6 +352,7 @@ async function selectRadixOption(label: string, option: string) {
 
 describe("App", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", window.location.pathname);
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date(2026, 5, 7, 12));
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
@@ -578,7 +579,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Calendar/i }));
 
     const readingDay = screen.getByLabelText(
       "Monday, May 4, 2026: 1h 30m read, intensity 4 of 4. View 2 books",
@@ -609,7 +610,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Calendar/i }));
     const readingDayButton = screen.getByRole("button", {
       name: "Monday, May 4, 2026: 1h 30m read, intensity 4 of 4. View 2 books",
     });
@@ -694,7 +695,7 @@ describe("App", () => {
 
     const deviceBanner = within(screen.getByLabelText("Device import status"));
     expect(await deviceBanner.findByText("Ready to import")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /Snapshots/i }));
+    await userEvent.click(screen.getByRole("link", { name: /Snapshots/i }));
     expect(screen.getAllByText(/E:\\.adds\\koreader\\settings\\statistics.sqlite3/).length).toBeGreaterThan(0);
   });
 
@@ -752,7 +753,8 @@ describe("App", () => {
     expect(await screen.findByText(/Auto-import failed:/)).toBeInTheDocument();
     expect(screen.getByText(/Unsupported KOReader statistics schema/)).toBeInTheDocument();
     expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
-    expect(screen.getByText("1 snapshots")).toBeInTheDocument();
+    const snapshotsLink = screen.getByRole("link", { name: /Snapshots/i });
+    expect(within(snapshotsLink.closest('[data-sidebar="menu-item"]') as HTMLElement).getByText("1")).toBeInTheDocument();
   });
 
   it("makes sidebar sections navigable", async () => {
@@ -782,13 +784,12 @@ describe("App", () => {
 
     expect(screen.queryByRole("button", { name: /Statistics/i })).not.toBeInTheDocument();
 
-    await userEvent.click(await screen.findByRole("button", { name: /Snapshots/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Snapshots/i }));
     expect(screen.getAllByText("Snapshots").length).toBeGreaterThan(1);
     expect(screen.getAllByText("20260531T120000Z").length).toBeGreaterThan(0);
-    expect(screen.getByRole("region", { name: "Snapshots table" })).toHaveClass("viewport-table");
     expect(screen.getByRole("region", { name: "Snapshots table" })).toHaveAttribute("tabindex", "0");
 
-    await userEvent.click(screen.getByRole("button", { name: /Calendar/i }));
+    await userEvent.click(screen.getByRole("link", { name: /Calendar/i }));
     expect(screen.getAllByText("Calendar").length).toBeGreaterThan(1);
     expect(screen.getAllByRole("gridcell")).toHaveLength(365);
     expect(screen.getByLabelText(/Sunday, June 8, 2025: no reading/)).toBeInTheDocument();
@@ -799,7 +800,7 @@ describe("App", () => {
     expect(calendarSummary.getByText("1h 30m peak")).toBeInTheDocument();
     expect(screen.queryByLabelText(/Monday, January 1, 2024/)).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /Settings/i }));
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
     expect(screen.getAllByText("Settings").length).toBeGreaterThan(1);
     expect(screen.getByText("Kobo mount path")).toBeInTheDocument();
     expect(screen.getByText("Local snapshots")).toBeInTheDocument();
@@ -825,13 +826,84 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText("Recent books");
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+    const trigger = document.querySelector('[data-sidebar="trigger"]');
+    expect(trigger).not.toBeNull();
+    await userEvent.click(trigger as HTMLElement);
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
 
-    await userEvent.click(await screen.findByRole("button", { name: /Books/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
 
     expect(screen.getByRole("region", { name: "Books table" })).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await userEvent.click(trigger as HTMLElement);
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("link", { name: /kostats/i }));
+
+    expect(screen.getByText("Recent books")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("collapses the desktop sidebar to its icon layout", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+
+    await screen.findByText("Recent books");
+    const dashboardItem = screen.getByRole("link", { name: /Dashboard/i });
+    const booksItem = screen.getByRole("link", { name: /^Books$/i });
+    expect(dashboardItem).toHaveAttribute("data-active", "true");
+    expect(dashboardItem).toHaveAttribute("aria-current", "page");
+    expect(booksItem).not.toHaveAttribute("data-active");
+    expect(booksItem).not.toHaveAttribute("aria-current");
+    expect(dashboardItem).toHaveAttribute("href", "#dashboard");
+    expect(booksItem).toHaveAttribute("href", "#books");
+
+    await userEvent.click(booksItem);
+
+    expect(window.location.hash).toBe("#books");
+    expect(dashboardItem).not.toHaveAttribute("data-active");
+    expect(dashboardItem).not.toHaveAttribute("aria-current");
+    expect(booksItem).toHaveAttribute("data-active", "true");
+    expect(booksItem).toHaveAttribute("aria-current", "page");
+
+    act(() => {
+      window.history.pushState(null, "", "#dashboard");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(dashboardItem).toHaveAttribute("data-active", "true");
+    expect(booksItem).not.toHaveAttribute("data-active");
+
+    act(() => {
+      window.location.hash = "books";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(dashboardItem).not.toHaveAttribute("data-active");
+    expect(booksItem).toHaveAttribute("data-active", "true");
+
+    const sidebar = document.querySelector('[data-slot="sidebar"][data-state]');
+    expect(sidebar).toHaveAttribute("data-state", "expanded");
+
+    const trigger = document.querySelector('[data-sidebar="trigger"]');
+    expect(trigger).not.toBeNull();
+    await userEvent.click(trigger as HTMLElement);
+
+    expect(sidebar).toHaveAttribute("data-state", "collapsed");
+    expect(sidebar).toHaveAttribute("data-collapsible", "icon");
   });
 
   it("shows a filterable and sortable full Books view", async () => {
@@ -855,14 +927,12 @@ describe("App", () => {
     const expectedTableMaxHeight = `${window.innerHeight - 53}px`;
     await screen.findByRole("table");
     const recentRegion = screen.getByRole("region", { name: "Recent books table" });
-    expect(recentRegion).toHaveClass("viewport-table");
     expect(recentRegion).toHaveStyle({ maxHeight: expectedTableMaxHeight });
     expect(screen.getByRole("region", { name: "Recent books table" })).toHaveAttribute("tabindex", "0");
 
-    await userEvent.click(await screen.findByRole("button", { name: /Books/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
     expect(screen.getAllByText("Books").length).toBeGreaterThan(1);
     const booksTableRegion = screen.getByRole("region", { name: "Books table" });
-    expect(booksTableRegion).toHaveClass("viewport-table");
     expect(booksTableRegion).toHaveStyle({ maxHeight: expectedTableMaxHeight });
     expect(booksTableRegion).toHaveAttribute("tabindex", "0");
     Object.defineProperty(booksTableRegion, "clientHeight", { configurable: true, value: 400 });
@@ -1014,7 +1084,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Calendar/i }));
 
     expect(screen.getAllByText("Calendar").length).toBeGreaterThan(1);
   });
@@ -1036,7 +1106,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Calendar/i }));
 
     const heatmap = screen.getByLabelText("Scrollable reading calendar heatmap");
     expect(within(heatmap).getAllByRole("gridcell")).toHaveLength(365);
@@ -1077,7 +1147,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: /Calendar/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Calendar/i }));
 
     const heatmap = screen.getByLabelText("Scrollable reading calendar heatmap");
     expect(heatmap).toHaveProperty("scrollLeft", 488);
@@ -1110,7 +1180,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await userEvent.click(await screen.findByRole("button", { name: /Snapshots/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Snapshots/i }));
     await userEvent.click(screen.getAllByRole("button", { name: "View" })[0]);
 
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
@@ -1162,15 +1232,15 @@ describe("App", () => {
 
     render(<App />);
 
-    await userEvent.click(await screen.findByRole("button", { name: /Snapshots/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Snapshots/i }));
     await userEvent.click(screen.getAllByRole("button", { name: "View" })[0]);
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
 
     autoImportChanged = true;
-    await userEvent.click(screen.getByRole("button", { name: /Settings/i }));
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
     await userEvent.click(screen.getByRole("button", { name: /Refresh now/i }));
 
-    await userEvent.click(screen.getByRole("button", { name: /Dashboard/i }));
+    await userEvent.click(screen.getByRole("link", { name: /Dashboard/i }));
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
     const deviceBanner = within(screen.getByLabelText("Device import status"));
     expect(deviceBanner.getByText("Viewing")).toBeInTheDocument();
@@ -1231,7 +1301,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: /Backups/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Backups/i }));
 
     const backupCard = screen.getByRole("article", { name: /Recovery backup/i });
     expect(within(backupCard).getByText("Contains credentials")).toBeInTheDocument();
@@ -1292,7 +1362,7 @@ describe("App", () => {
     });
 
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: /Export/i }));
+    await userEvent.click(await screen.findByRole("link", { name: /Export/i }));
     await userEvent.click(screen.getByRole("button", { name: /Export dashboard JSON/i }));
     await userEvent.click(screen.getByRole("button", { name: /Export books CSV/i }));
 

@@ -1,5 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  ReactNode,
+} from "react";
 import {
   type ColumnDef,
   type ColumnFiltersState,
@@ -99,15 +104,17 @@ import { Separator } from "@/components/ui/separator";
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarRail,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -152,9 +159,10 @@ import type {
 
 type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "export" | "settings";
 type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
-type NavItem = { id: View; label: string; icon: typeof Home };
+type NavItem = { id: View; label: string; icon: typeof Home; badge?: number };
 type ReadingDateFilter = { date: string; bookIds: string[] };
 
+const views = new Set<View>(["dashboard", "snapshots", "backups", "books", "calendar", "export", "settings"]);
 const tableViewportSideInset = 16;
 const tableViewportBottomInset = 37;
 const tableMinimumHeight = 240;
@@ -243,6 +251,15 @@ function addDays(date: Date, count: number) {
   const next = new Date(date);
   next.setDate(next.getDate() + count);
   return next;
+}
+
+function viewFromHash() {
+  const view = window.location.hash.slice(1) as View;
+  return views.has(view) ? view : "dashboard";
+}
+
+function shouldHandleNavigation(event: ReactMouseEvent<HTMLAnchorElement>) {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 function calendarLevel(minutes: number, maxMinutes: number): CalendarDay["level"] {
@@ -527,14 +544,23 @@ function DeviceBanner({
   );
 }
 
+function MetadataCard({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <Card className="min-w-0" size="sm">
+      <CardHeader>
+        <CardDescription>{label}</CardDescription>
+      </CardHeader>
+      <CardContent className="truncate font-medium">{value}</CardContent>
+    </Card>
+  );
+}
+
 function SnapshotMeta({ label, snapshot, source = false }: { label: string; snapshot: Snapshot | null; source?: boolean }) {
   return (
-    <div className="min-w-0 rounded-lg border bg-muted/30 p-3">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate font-medium">
-        {snapshot ? (source ? formatSnapshotSource(snapshot) : formatDateTime(snapshot.imported_at)) : "None"}
-      </div>
-    </div>
+    <MetadataCard
+      label={label}
+      value={snapshot ? (source ? formatSnapshotSource(snapshot) : formatDateTime(snapshot.imported_at)) : "None"}
+    />
   );
 }
 
@@ -711,7 +737,7 @@ function ViewportTableScrollArea({
   return (
     <ScrollArea
       aria-label={ariaLabel}
-      className="viewport-table rounded-b-xl"
+      className="min-w-0 overflow-auto rounded-b-xl overscroll-contain [scrollbar-gutter:stable] [&_[data-slot=table-container]]:min-w-0 [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead]:bg-card"
       onKeyDown={handleKeyDown}
       ref={contentRef}
       role="region"
@@ -732,7 +758,7 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
       </CardHeader>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea ariaLabel="Recent books table">
-          <Table className="data-table recent-books-table">
+          <Table className="min-w-[860px] table-fixed max-[560px]:min-w-[620px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
             <TableHeader>
               <TableRow>
                 <TableHead>Title</TableHead>
@@ -981,7 +1007,7 @@ function BooksView({
       </CardContent>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea ariaLabel="Books table">
-          <Table className="data-table books-table">
+          <Table className="min-w-[1280px] table-fixed max-[560px]:min-w-[860px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
             <TableHeader>
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>
@@ -1082,7 +1108,7 @@ function SnapshotsView({
       </CardHeader>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea ariaLabel="Snapshots table">
-          <Table className="data-table snapshots-table">
+          <Table className="min-w-[920px] table-fixed max-[560px]:min-w-[680px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
             <TableHeader>
               <TableRow>
                 <TableHead>Imported</TableHead>
@@ -1588,14 +1614,8 @@ function SettingsView({
       </CardHeader>
       <CardContent className="grid gap-6">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="min-w-0 rounded-lg border bg-muted/30 p-3">
-            <div className="text-xs font-medium text-muted-foreground">Kobo mount path</div>
-            <div className="mt-1 truncate font-medium">{device?.mount_path ?? "Auto-detect"}</div>
-          </div>
-          <div className="min-w-0 rounded-lg border bg-muted/30 p-3">
-            <div className="text-xs font-medium text-muted-foreground">Local snapshots</div>
-            <div className="mt-1 truncate font-medium">{snapshots.length}</div>
-          </div>
+          <MetadataCard label="Kobo mount path" value={device?.mount_path ?? "Auto-detect"} />
+          <MetadataCard label="Local snapshots" value={snapshots.length} />
         </div>
         {candidateDiagnostics.length > 0 ? (
           <div className="grid gap-3">
@@ -1631,22 +1651,63 @@ function AppSidebarNav({
     <SidebarMenu>
       {items.map((item) => {
         const Icon = item.icon;
+        const isActive = activeView === item.id;
         return (
           <SidebarMenuItem key={item.id}>
             <SidebarMenuButton
-              isActive={activeView === item.id}
-              onClick={() => {
-                onSelect(item.id);
-                setOpenMobile(false);
-              }}
+              asChild
+              data-active={isActive ? true : undefined}
+              isActive={isActive}
               tooltip={item.label}
             >
-              <Icon />
-              <span>{item.label}</span>
+              <a
+                aria-current={isActive ? "page" : undefined}
+                href={`#${item.id}`}
+                onClick={(event) => {
+                  if (!shouldHandleNavigation(event)) return;
+                  event.preventDefault();
+                  onSelect(item.id);
+                  setOpenMobile(false);
+                }}
+              >
+                <Icon />
+                <span>{item.label}</span>
+              </a>
             </SidebarMenuButton>
+            {item.badge != null ? <SidebarMenuBadge>{item.badge}</SidebarMenuBadge> : null}
           </SidebarMenuItem>
         );
       })}
+    </SidebarMenu>
+  );
+}
+
+function AppSidebarBrand({ onSelect }: { onSelect: () => void }) {
+  const { setOpenMobile } = useSidebar();
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton asChild data-active={undefined} size="lg">
+          <a
+            href="#dashboard"
+            onClick={(event) => {
+              if (!shouldHandleNavigation(event)) return;
+              event.preventDefault();
+              onSelect();
+              setOpenMobile(false);
+            }}
+          >
+            <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+              <BookOpen />
+            </div>
+            <div className="grid flex-1 text-left text-sm leading-tight">
+              <span className="truncate font-medium">kostats</span>
+              <span className="truncate text-xs">KOReader statistics</span>
+            </div>
+          </a>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
     </SidebarMenu>
   );
 }
@@ -1656,7 +1717,7 @@ export default function App() {
   const [dashboard, setDashboard] = useState<Dashboard>(emptyDashboard);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [backups, setBackups] = useState<RecoveryBackup[]>([]);
-  const [activeView, setActiveView] = useState<View>("dashboard");
+  const [activeView, setActiveView] = useState<View>(viewFromHash);
   const [readingDateFilter, setReadingDateFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoImportError, setAutoImportError] = useState<string | null>(null);
@@ -1699,7 +1760,7 @@ export default function App() {
       selectedSnapshotId.current = snapshotId;
       setDashboard(selectedDashboard);
       setReadingDateFilter(null);
-      setActiveView("dashboard");
+      selectView("dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load snapshot");
     } finally {
@@ -1715,6 +1776,19 @@ export default function App() {
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    const syncViewFromHistory = () => {
+      setReadingDateFilter(null);
+      setActiveView(viewFromHash());
+    };
+    window.addEventListener("hashchange", syncViewFromHistory);
+    window.addEventListener("popstate", syncViewFromHistory);
+    return () => {
+      window.removeEventListener("hashchange", syncViewFromHistory);
+      window.removeEventListener("popstate", syncViewFromHistory);
+    };
+  }, []);
+
   async function handleImport() {
     setBusy(true);
     setError(null);
@@ -1724,7 +1798,7 @@ export default function App() {
       selectedSnapshotId.current = null;
       setDashboard(result.dashboard);
       setReadingDateFilter(null);
-      setActiveView("dashboard");
+      selectView("dashboard");
       await refresh();
       toast.success("Imported from Kobo");
     } catch (err) {
@@ -1744,7 +1818,7 @@ export default function App() {
       selectedSnapshotId.current = null;
       setDashboard(result.dashboard);
       setReadingDateFilter(null);
-      setActiveView("dashboard");
+      selectView("dashboard");
       await refresh();
       toast.success("Database uploaded");
     } catch (err) {
@@ -1801,56 +1875,54 @@ export default function App() {
   }, [dashboard.charts.calendar.days, readingDateFilter]);
   const navItems: NavItem[] = [
     { id: "dashboard", label: "Dashboard", icon: Home },
-    { id: "snapshots", label: "Snapshots", icon: Database },
-    { id: "backups", label: "Backups", icon: ArchiveRestore },
+    { id: "snapshots", label: "Snapshots", icon: Database, badge: snapshots.length },
+    { id: "backups", label: "Backups", icon: ArchiveRestore, badge: backups.length },
     { id: "books", label: "Books", icon: Library },
     { id: "calendar", label: "Calendar", icon: CalendarDays },
     { id: "export", label: "Export", icon: FileUp },
     { id: "settings", label: "Settings", icon: Settings },
   ];
   function selectView(view: View) {
-    if (view === "books") setReadingDateFilter(null);
+    setReadingDateFilter(null);
     setActiveView(view);
+    if (window.location.hash !== `#${view}`) {
+      window.history.pushState(null, "", `#${view}`);
+    }
   }
 
   function selectCalendarDate(day: CalendarDay) {
     setReadingDateFilter(day.date);
     setActiveView("books");
+    if (window.location.hash !== "#books") {
+      window.history.pushState(null, "", "#books");
+    }
   }
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <TooltipProvider>
         <SidebarProvider>
-        <Sidebar collapsible="offcanvas">
+        <Sidebar collapsible="icon" variant="inset">
           <SidebarHeader>
-            <div className="px-2 py-1">
-              <div className="font-heading text-lg font-semibold">kostats</div>
-              <div className="text-xs text-muted-foreground">KOReader statistics</div>
-            </div>
+            <AppSidebarBrand onSelect={() => selectView("dashboard")} />
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
+              <SidebarGroupLabel>Library</SidebarGroupLabel>
               <SidebarGroupContent>
                 <AppSidebarNav items={navItems} activeView={activeView} onSelect={selectView} />
               </SidebarGroupContent>
             </SidebarGroup>
           </SidebarContent>
-          <SidebarFooter>
-            <Separator />
-            <div className="grid gap-2 p-2 text-xs text-muted-foreground">
-              <Badge variant="outline">{snapshots.length} snapshots</Badge>
-              <Badge variant="outline">{backups.length} recovery backups</Badge>
-            </div>
-          </SidebarFooter>
+          <SidebarRail />
         </Sidebar>
         <SidebarInset>
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4 md:hidden">
-            <SidebarTrigger />
-            <Separator orientation="vertical" className="h-4" />
-            <span className="font-medium">kostats</span>
+          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
+            <span className="font-medium">{navItems.find((item) => item.id === activeView)?.label}</span>
           </header>
-          <main className="grid gap-4 p-4 md:p-6">
+          <div className="grid gap-4 p-4 md:p-6">
             <DeviceBanner
               status={device}
               activeSnapshot={activeSnapshot}
@@ -1910,7 +1982,7 @@ export default function App() {
             {activeView === "settings" ? (
               <SettingsView device={device} snapshots={snapshots} onRefresh={() => refresh().catch((err: Error) => setError(err.message))} />
             ) : null}
-          </main>
+          </div>
         </SidebarInset>
         <Toaster />
         </SidebarProvider>
