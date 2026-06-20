@@ -638,6 +638,33 @@ function ReadingBarChart({
 
 function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
   const chartData = data.map((item) => ({ ...item, label: item.title }));
+
+  function BookTitleTick({
+    x = 0,
+    y = 0,
+    payload,
+  }: {
+    x?: number;
+    y?: number;
+    payload?: { value?: unknown };
+  }) {
+    const title = String(payload?.value ?? "");
+    const label = title.length > 22 ? `${title.slice(0, 21).trimEnd()}…` : title;
+
+    return (
+      <text
+        x={x - 10}
+        y={y}
+        dy="0.32em"
+        textAnchor="end"
+        className="fill-muted-foreground text-[11px]"
+      >
+        <title>{title}</title>
+        {label}
+      </text>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -648,7 +675,7 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
           <EmptyPanel icon={<BookOpen />} title="No books yet" />
         ) : (
           <ChartContainer config={topBooksChartConfig} className="h-64 w-full">
-            <BarChart accessibilityLayer data={chartData} layout="vertical" margin={{ left: 4, right: 24, top: 8 }}>
+            <BarChart accessibilityLayer data={chartData} layout="vertical" margin={{ left: 8, right: 24, top: 8 }}>
               <CartesianGrid horizontal={false} />
               <XAxis type="number" hide />
               <YAxis
@@ -656,8 +683,8 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
                 type="category"
                 tickLine={false}
                 axisLine={false}
-                width={110}
-                tickFormatter={(value) => String(value).slice(0, 18)}
+                width={168}
+                tick={<BookTitleTick />}
               />
               <ChartTooltip
                 cursor={false}
@@ -743,6 +770,7 @@ function ViewportTableScrollArea({
       role="region"
       style={maxHeight == null ? undefined : { maxHeight }}
       tabIndex={0}
+      type="auto"
     >
       {children}
       <ScrollBar orientation="horizontal" />
