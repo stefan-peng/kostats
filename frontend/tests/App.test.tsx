@@ -562,6 +562,54 @@ describe("App", () => {
     expect(document.querySelectorAll(".recharts-bar-rectangle").length).toBeGreaterThan(0);
   });
 
+  it("renders a label for every top book", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      bottom: 0,
+      height: 210,
+      left: 0,
+      right: 327,
+      top: 0,
+      width: 327,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    const topBooks = Array.from({ length: 10 }, (_, index) => ({
+      id: String(index + 1),
+      title: `Chart Book ${index + 1}`,
+      hours: 10 - index,
+    }));
+
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return {
+        ...populatedDashboard,
+        charts: {
+          ...populatedDashboard.charts,
+          top_books: topBooks,
+        },
+      };
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("Top books")).toBeInTheDocument();
+    for (const book of topBooks) {
+      expect(screen.getAllByText(book.title).length).toBeGreaterThan(0);
+    }
+  });
+
   it("shows calendar heatmap values on hover", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {

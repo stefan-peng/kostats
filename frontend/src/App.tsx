@@ -681,6 +681,7 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
               <YAxis
                 dataKey="label"
                 type="category"
+                interval={0}
                 tickLine={false}
                 axisLine={false}
                 width={168}
