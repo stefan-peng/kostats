@@ -166,6 +166,7 @@ const views = new Set<View>(["dashboard", "snapshots", "backups", "books", "cale
 const tableViewportSideInset = 16;
 const tableViewportBottomInset = 37;
 const tableMinimumHeight = 240;
+const recentBooksTableMinimumHeight = 420;
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const emptyDashboard: Dashboard = {
@@ -713,9 +714,11 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
 function ViewportTableScrollArea({
   ariaLabel,
   children,
+  minimumHeight = tableMinimumHeight,
 }: {
   ariaLabel: string;
   children: ReactNode;
+  minimumHeight?: number;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [maxHeight, setMaxHeight] = useState<number>();
@@ -751,7 +754,7 @@ function ViewportTableScrollArea({
       const availableHeight =
         window.innerHeight - Math.max(documentTop, tableViewportSideInset) - tableViewportBottomInset;
       const viewportCap = Math.max(0, window.innerHeight - tableViewportSideInset - tableViewportBottomInset);
-      setMaxHeight(Math.min(Math.max(tableMinimumHeight, availableHeight), viewportCap));
+      setMaxHeight(Math.min(Math.max(minimumHeight, availableHeight), viewportCap));
     };
 
     updateMaxHeight();
@@ -760,7 +763,7 @@ function ViewportTableScrollArea({
     return () => {
       window.removeEventListener("resize", updateMaxHeight);
     };
-  }, []);
+  }, [minimumHeight]);
 
   return (
     <ScrollArea
@@ -786,7 +789,7 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
         <CardTitle>Recent books</CardTitle>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <ViewportTableScrollArea ariaLabel="Recent books table">
+        <ViewportTableScrollArea ariaLabel="Recent books table" minimumHeight={recentBooksTableMinimumHeight}>
           <Table className="min-w-[860px] table-fixed max-[560px]:min-w-[620px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
             <TableHeader>
               <TableRow>

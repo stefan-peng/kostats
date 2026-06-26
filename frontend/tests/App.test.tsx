@@ -1060,7 +1060,7 @@ describe("App", () => {
     expect(within(rows[1]).getByText("Notes on a Small Planet")).toBeInTheDocument();
   });
 
-  it("keeps a fixed minimum table height during page scroll without exceeding the viewport", async () => {
+  it("keeps a taller recent books table height during page scroll without exceeding the viewport", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
         return {
@@ -1092,7 +1092,7 @@ describe("App", () => {
 
     await screen.findByRole("table");
     const tableRegion = screen.getByRole("region", { name: "Recent books table" });
-    expect(tableRegion).toHaveStyle({ maxHeight: "240px" });
+    expect(tableRegion).toHaveStyle({ maxHeight: "322px" });
 
     rectSpy.mockReturnValue({
       bottom: 0,
@@ -1107,7 +1107,7 @@ describe("App", () => {
     });
     act(() => window.dispatchEvent(new Event("scroll")));
 
-    expect(tableRegion).toHaveStyle({ maxHeight: "240px" });
+    expect(tableRegion).toHaveStyle({ maxHeight: "322px" });
 
     vi.spyOn(window, "innerHeight", "get").mockReturnValue(200);
     act(() => window.dispatchEvent(new Event("resize")));
