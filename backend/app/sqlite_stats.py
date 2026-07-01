@@ -91,6 +91,21 @@ def month_key(dt: datetime) -> str:
     return f"{dt.year:04d}-{dt.month:02d}"
 
 
+def iter_month_keys(start: str, end: str) -> list[str]:
+    start_year, start_month = [int(part) for part in start.split("-")]
+    end_year, end_month = [int(part) for part in end.split("-")]
+    year = start_year
+    month = start_month
+    keys: list[str] = []
+    while (year, month) <= (end_year, end_month):
+        keys.append(f"{year:04d}-{month:02d}")
+        month += 1
+        if month > 12:
+            year += 1
+            month = 1
+    return keys
+
+
 def month_label(key: str) -> str:
     year, month = [int(part) for part in key.split("-")]
     return f"{calendar.month_abbr[month]} {str(year)[2:]}"
@@ -108,6 +123,29 @@ def seconds_to_minutes(seconds: float) -> float:
 
 def seconds_to_hours(seconds: float) -> float:
     return round(seconds / 3600, 2)
+
+
+def trailing_day_keys(sorted_days: list[str], *, limit: int = 30) -> list[str]:
+    if not sorted_days:
+        return []
+    end = datetime.strptime(sorted_days[-1], "%Y-%m-%d").date()
+    start = max(datetime.strptime(sorted_days[0], "%Y-%m-%d").date(), end - timedelta(days=limit - 1))
+    total_days = (end - start).days + 1
+    return [(start + timedelta(days=offset)).isoformat() for offset in range(total_days)]
+
+
+def trailing_month_keys(sorted_months: list[str], *, limit: int = 12) -> list[str]:
+    if not sorted_months:
+        return []
+    end = datetime.strptime(f"{sorted_months[-1]}-01", "%Y-%m-%d").date()
+    earliest = datetime.strptime(f"{sorted_months[0]}-01", "%Y-%m-%d").date()
+    start_year = end.year
+    start_month = end.month - (limit - 1)
+    while start_month <= 0:
+        start_year -= 1
+        start_month += 12
+    start = max(earliest, date(start_year, start_month, 1))
+    return iter_month_keys(f"{start.year:04d}-{start.month:02d}", f"{end.year:04d}-{end.month:02d}")
 
 
 def calendar_level(seconds: float, max_seconds: float) -> int:
@@ -542,8 +580,8 @@ def build_dashboard(
 
     sorted_days = sorted(day_seconds)
     sorted_months = sorted(month_seconds)
-    latest_days = sorted_days[-30:]
-    latest_months = sorted_months[-12:]
+    latest_days = trailing_day_keys(sorted_days)
+    latest_months = trailing_month_keys(sorted_months)
     max_day_seconds = max(day_seconds.values(), default=0.0)
 
     return {
@@ -566,7 +604,7 @@ def build_dashboard(
                 {
                     "date": key,
                     "label": day_label(key),
-                    "minutes": seconds_to_minutes(day_seconds[key]),
+                    "minutes": seconds_to_minutes(day_seconds.get(key, 0.0)),
                 }
                 for key in latest_days
             ],
@@ -574,7 +612,7 @@ def build_dashboard(
                 {
                     "month": key,
                     "label": month_label(key),
-                    "hours": seconds_to_hours(month_seconds[key]),
+                    "hours": seconds_to_hours(month_seconds.get(key, 0.0)),
                 }
                 for key in latest_months
             ],

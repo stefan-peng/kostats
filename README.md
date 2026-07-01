@@ -11,11 +11,16 @@ Recovery backups are separate immutable ZIP archives. They preserve KOReader set
 ```bash
 uv sync
 npm install --prefix frontend
-uv run uvicorn backend.app.main:app --reload
-npm run dev --prefix frontend
+uv run dev
 ```
 
-Open the Vite URL shown by npm, usually `http://127.0.0.1:5173`.
+For a bounded startup smoke check that tears both servers down automatically:
+
+```bash
+uv run dev --smoke-seconds 15
+```
+
+Open `http://127.0.0.1:5173`.
 
 The app works when the Kobo is not connected. On startup and while open, it looks for a mounted Kobo, imports a new local snapshot only when the KOReader database has changed, and continues showing the latest local snapshot if no device is present. macOS/Linux defaults to `/Volumes/KOBOeReader`; Windows scans mounted drive letters such as `E:\` for a Kobo volume or KOReader statistics database.
 

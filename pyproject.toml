@@ -10,6 +10,16 @@ dependencies = [
     "uvicorn[standard]>=0.34.0",
 ]
 
+[project.scripts]
+dev = "backend.app.dev:main"
+
+[build-system]
+requires = ["setuptools>=80.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
 [dependency-groups]
 dev = [
     "httpx>=0.28.0",
@@ -19,4 +29,3 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 pythonpath = ["."]
-

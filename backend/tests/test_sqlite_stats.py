@@ -127,6 +127,101 @@ def create_long_history_db(path: Path) -> None:
     conn.close()
 
 
+def create_sparse_history_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE book (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            authors TEXT,
+            last_open INTEGER,
+            pages INTEGER
+        );
+        CREATE TABLE page_stat_data (
+            id_book INTEGER,
+            page INTEGER,
+            start_time INTEGER,
+            duration INTEGER,
+            total_pages INTEGER
+        );
+        INSERT INTO book VALUES (1, 'Tehanu', 'Ursula K. Le Guin', 1780185600, 320);
+        """
+    )
+    rows = [
+        (1, 1, ts(2026, 5, 1), 1800, 320),
+        (1, 2, ts(2026, 5, 3), 2700, 320),
+        (1, 3, ts(2026, 5, 5), 3600, 320),
+        (1, 4, ts(2026, 1, 1), 7200, 320),
+        (1, 5, ts(2026, 3, 1), 10800, 320),
+        (1, 6, ts(2026, 5, 1, 14), 14400, 320),
+    ]
+    conn.executemany("INSERT INTO page_stat_data VALUES (?, ?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def create_sparse_trailing_year_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE book (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            authors TEXT,
+            last_open INTEGER,
+            pages INTEGER
+        );
+        CREATE TABLE page_stat_data (
+            id_book INTEGER,
+            page INTEGER,
+            start_time INTEGER,
+            duration INTEGER,
+            total_pages INTEGER
+        );
+        INSERT INTO book VALUES (1, 'The Tombs of Atuan', 'Ursula K. Le Guin', 1767139200, 180);
+        """
+    )
+    rows = [
+        (1, 1, ts(2024, 1, 1), 3600, 180),
+        (1, 2, ts(2024, 12, 1), 7200, 180),
+        (1, 3, ts(2025, 12, 1), 10800, 180),
+    ]
+    conn.executemany("INSERT INTO page_stat_data VALUES (?, ?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def create_exact_twelve_month_history_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE book (
+            id INTEGER PRIMARY KEY,
+            title TEXT,
+            authors TEXT,
+            last_open INTEGER,
+            pages INTEGER
+        );
+        CREATE TABLE page_stat_data (
+            id_book INTEGER,
+            page INTEGER,
+            start_time INTEGER,
+            duration INTEGER,
+            total_pages INTEGER
+        );
+        INSERT INTO book VALUES (1, 'A Fisherman of the Inland Sea', 'Ursula K. Le Guin', 1767139200, 220);
+        """
+    )
+    rows = [
+        (1, month, ts(2025, month, 1), month * 600, 220)
+        for month in range(1, 13)
+    ]
+    conn.executemany("INSERT INTO page_stat_data VALUES (?, ?, ?, ?, ?)", rows)
+    conn.commit()
+    conn.close()
+
+
 def create_many_books_db(path: Path, count: int = 25) -> None:
     conn = sqlite3.connect(path)
     conn.executescript(
@@ -336,6 +431,55 @@ def test_calendar_keeps_all_reading_days_with_intensity(tmp_path: Path) -> None:
     assert calendar["days"][-1]["date"] == "2026-02-04"
     assert calendar["days"][-1]["minutes"] == 35
     assert calendar["days"][-1]["level"] == 4
+
+
+def test_charts_include_gaps_for_missing_daily_and_monthly_reading(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_sparse_history_db(db_path)
+
+    dashboard = build_dashboard(db_path, today=date(2026, 5, 5))
+
+    assert len(dashboard["charts"]["daily"]) == 30
+    assert dashboard["charts"]["daily"][0] == {"date": "2026-04-06", "label": "Apr 6", "minutes": 0.0}
+    assert dashboard["charts"]["daily"][-5:] == [
+        {"date": "2026-05-01", "label": "May 1", "minutes": 270.0},
+        {"date": "2026-05-02", "label": "May 2", "minutes": 0.0},
+        {"date": "2026-05-03", "label": "May 3", "minutes": 45.0},
+        {"date": "2026-05-04", "label": "May 4", "minutes": 0.0},
+        {"date": "2026-05-05", "label": "May 5", "minutes": 60.0},
+    ]
+    assert dashboard["charts"]["monthly"] == [
+        {"month": "2026-01", "label": "Jan 26", "hours": 2.0},
+        {"month": "2026-02", "label": "Feb 26", "hours": 0.0},
+        {"month": "2026-03", "label": "Mar 26", "hours": 3.0},
+        {"month": "2026-04", "label": "Apr 26", "hours": 0.0},
+        {"month": "2026-05", "label": "May 26", "hours": 6.25},
+    ]
+
+
+def test_monthly_chart_stays_within_trailing_twelve_calendar_months(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_sparse_trailing_year_db(db_path)
+
+    dashboard = build_dashboard(db_path, today=date(2025, 12, 15))
+
+    monthly = dashboard["charts"]["monthly"]
+    assert len(monthly) == 12
+    assert monthly[0] == {"month": "2025-01", "label": "Jan 25", "hours": 0.0}
+    assert monthly[-1] == {"month": "2025-12", "label": "Dec 25", "hours": 3.0}
+    assert all(point["month"] >= "2025-01" for point in monthly)
+
+
+def test_monthly_chart_keeps_exact_twelve_month_history(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_exact_twelve_month_history_db(db_path)
+
+    dashboard = build_dashboard(db_path, today=date(2025, 12, 15))
+
+    monthly = dashboard["charts"]["monthly"]
+    assert len(monthly) == 12
+    assert monthly[0]["month"] == "2025-01"
+    assert monthly[-1]["month"] == "2025-12"
 
 
 def test_full_books_list_is_not_limited_to_recent_preview(tmp_path: Path) -> None:
