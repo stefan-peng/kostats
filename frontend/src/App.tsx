@@ -140,17 +140,22 @@ import {
   createKoboBackup,
   getBackups,
   getDashboard,
+  getDevices,
   getDeviceStatus,
   getRestorePreview,
   getSnapshots,
   importFromKobo,
+  reassignSnapshot,
+  renameDevice,
   restoreBackup,
   uploadDatabase,
 } from "./api";
 import type {
   BookStats,
   Dashboard,
+  DeviceSummary,
   DeviceStatus,
+  DeviceAssignment,
   RecoveryBackup,
   RestorePreview,
   RestoreResult,
@@ -161,6 +166,7 @@ type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "expo
 type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
 type NavItem = { id: View; label: string; icon: typeof Home; badge?: number };
 type ReadingDateFilter = { date: string; bookIds: string[] };
+type DeviceFilter = "all" | string;
 
 const views = new Set<View>(["dashboard", "snapshots", "backups", "books", "calendar", "export", "settings"]);
 const tableViewportSideInset = 16;
@@ -224,6 +230,15 @@ const topBooksChartConfig = {
     color: "var(--chart-3)",
   },
 } satisfies ChartConfig;
+
+const deviceChartColors = [
+  "var(--device-chart-1)",
+  "var(--device-chart-2)",
+  "var(--device-chart-3)",
+  "var(--device-chart-4)",
+  "var(--device-chart-5)",
+  "var(--device-chart-6)",
+];
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "Never";
@@ -438,6 +453,7 @@ function downloadText(filename: string, content: string, type: string) {
 function formatSnapshotSource(snapshot: Snapshot | null) {
   if (!snapshot) return "Connect Kobo or upload DB";
   const path = snapshot.source_path ?? snapshot.source;
+  if (snapshot.source === "aggregate") return "All devices";
   if (snapshot.source === "kobo-auto") return `Auto Kobo import: ${path}`;
   if (snapshot.source === "kobo") return `Kobo import: ${path}`;
   return path;
@@ -482,15 +498,25 @@ function EmptyPanel({
 
 function DeviceBanner({
   status,
+  devices,
+  importDevice,
+  importDeviceLabel,
   activeSnapshot,
   latestSnapshot,
+  onImportDeviceChange,
+  onImportDeviceLabelChange,
   onImport,
   onUploadClick,
   busy,
 }: {
   status: DeviceStatus | null;
+  devices: DeviceSummary[];
+  importDevice: string;
+  importDeviceLabel: string;
   activeSnapshot: Snapshot | null;
   latestSnapshot: Snapshot | null;
+  onImportDeviceChange: (value: string) => void;
+  onImportDeviceLabelChange: (value: string) => void;
   onImport: () => void;
   onUploadClick: () => void;
   busy: boolean;
@@ -532,7 +558,18 @@ function DeviceBanner({
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-2">
+          <div className="text-sm font-medium">Import as</div>
+          <DeviceAssignmentControl
+            devices={devices}
+            value={importDevice}
+            newLabel={importDeviceLabel}
+            onValueChange={onImportDeviceChange}
+            onNewLabelChange={onImportDeviceLabelChange}
+            includeAuto
+          />
+        </div>
         <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
           <SnapshotMeta label={activeSnapshot?.id === latestSnapshot?.id ? "Snapshot" : "Viewing"} snapshot={activeSnapshot} />
           {latestSnapshot && activeSnapshot?.id !== latestSnapshot.id ? (
@@ -563,6 +600,84 @@ function SnapshotMeta({ label, snapshot, source = false }: { label: string; snap
       value={snapshot ? (source ? formatSnapshotSource(snapshot) : formatDateTime(snapshot.imported_at)) : "None"}
     />
   );
+}
+
+function DeviceSelector({
+  devices,
+  value,
+  onChange,
+}: {
+  devices: DeviceSummary[];
+  value: DeviceFilter;
+  onChange: (value: DeviceFilter) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-9 w-[220px]" aria-label="Device filter">
+        <SelectValue placeholder="All devices" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectItem value="all">All devices</SelectItem>
+          {devices.map((device) => (
+            <SelectItem key={device.id} value={device.id}>
+              {device.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function DeviceAssignmentControl({
+  devices,
+  value,
+  newLabel,
+  onValueChange,
+  onNewLabelChange,
+  includeAuto = false,
+}: {
+  devices: DeviceSummary[];
+  value: string;
+  newLabel: string;
+  onValueChange: (value: string) => void;
+  onNewLabelChange: (value: string) => void;
+  includeAuto?: boolean;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-[minmax(180px,240px)_minmax(180px,1fr)]">
+      <Select value={value} onValueChange={onValueChange}>
+        <SelectTrigger aria-label="Import device">
+          <SelectValue placeholder="Choose device" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {includeAuto ? <SelectItem value="auto">Auto-detected</SelectItem> : null}
+            {devices.map((device) => (
+              <SelectItem key={device.id} value={device.id}>
+                {device.label}
+              </SelectItem>
+            ))}
+            <SelectItem value="new">New device</SelectItem>
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+      <Input
+        aria-label="New device name"
+        placeholder="New device name"
+        value={newLabel}
+        disabled={value !== "new"}
+        onChange={(event) => onNewLabelChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
+function assignmentFromSelection(value: string, label: string): DeviceAssignment | undefined {
+  if (value === "auto") return undefined;
+  if (value === "new") return { new_device_label: label.trim() };
+  return { device_id: value };
 }
 
 function MetricCard({ label, value }: { label: string; value: string | number }) {
@@ -629,6 +744,74 @@ function ReadingBarChart({
                 fill={`var(--color-${valueKey})`}
                 radius={[4, 4, 0, 0]}
               />
+            </BarChart>
+          </ChartContainer>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeviceStackedBarChart({
+  title,
+  data,
+  devices,
+  unit,
+}: {
+  title: string;
+  data: Array<Record<string, string | number>>;
+  devices: Array<{ id: string; label: string }>;
+  unit: "minutes" | "hours";
+}) {
+  const config = Object.fromEntries(
+    devices.map((device, index) => [
+      device.id,
+      {
+        label: device.label,
+        color: deviceChartColors[index % deviceChartColors.length],
+      },
+    ]),
+  ) satisfies ChartConfig;
+  const formatValue = unit === "minutes"
+    ? (value: number) => formatDurationLabel(value * 60)
+    : (value: number) => formatDurationLabel(value * 3600);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {data.length === 0 || devices.length === 0 ? (
+          <EmptyPanel icon={<CalendarDays />} title="No reading data yet" />
+        ) : (
+          <ChartContainer config={config} className="h-64 w-full">
+            <BarChart accessibilityLayer data={data} margin={{ left: 0, right: 0, top: 8 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
+              <YAxis hide domain={[0, "dataMax"]} />
+              <ChartTooltip
+                cursor={false}
+                content={
+                  <ChartTooltipContent
+                    formatter={(value, name) => (
+                      <div className="grid gap-1">
+                        <span className="text-muted-foreground">{config[String(name)]?.label ?? String(name)}</span>
+                        <span className="font-medium">{formatValue(Number(value))}</span>
+                      </div>
+                    )}
+                  />
+                }
+              />
+              {devices.map((device, index) => (
+                <Bar
+                  key={device.id}
+                  dataKey={device.id}
+                  stackId="device"
+                  fill={deviceChartColors[index % deviceChartColors.length]}
+                  radius={index === devices.length - 1 ? [4, 4, 0, 0] : 0}
+                />
+              ))}
             </BarChart>
           </ChartContainer>
         )}
@@ -714,10 +897,12 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
 function ViewportTableScrollArea({
   ariaLabel,
   children,
+  constrainToViewport = true,
   minimumHeight = tableMinimumHeight,
 }: {
   ariaLabel: string;
   children: ReactNode;
+  constrainToViewport?: boolean;
   minimumHeight?: number;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
@@ -746,6 +931,11 @@ function ViewportTableScrollArea({
   }
 
   useLayoutEffect(() => {
+    if (!constrainToViewport) {
+      setMaxHeight(undefined);
+      return;
+    }
+
     const content = contentRef.current;
     if (!content) return;
 
@@ -763,7 +953,7 @@ function ViewportTableScrollArea({
     return () => {
       window.removeEventListener("resize", updateMaxHeight);
     };
-  }, [minimumHeight]);
+  }, [constrainToViewport, minimumHeight]);
 
   return (
     <ScrollArea
@@ -789,7 +979,11 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
         <CardTitle>Recent books</CardTitle>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <ViewportTableScrollArea ariaLabel="Recent books table" minimumHeight={recentBooksTableMinimumHeight}>
+        <ViewportTableScrollArea
+          ariaLabel="Recent books table"
+          constrainToViewport={false}
+          minimumHeight={recentBooksTableMinimumHeight}
+        >
           <Table className="min-w-[860px] table-fixed max-[560px]:min-w-[620px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
             <TableHeader>
               <TableRow>
@@ -1104,18 +1298,36 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
-        <ReadingBarChart
-          title="Daily reading"
-          data={dashboard.charts.daily}
-          valueKey="minutes"
-          formatValue={(minutes) => formatDurationLabel(minutes * 60)}
-        />
-        <ReadingBarChart
-          title="Monthly reading"
-          data={dashboard.charts.monthly}
-          valueKey="hours"
-          formatValue={(hours) => formatDurationLabel(hours * 3600)}
-        />
+        {dashboard.charts.devices?.length && dashboard.charts.daily_by_device?.length ? (
+          <DeviceStackedBarChart
+            title="Daily reading by device"
+            data={dashboard.charts.daily_by_device}
+            devices={dashboard.charts.devices}
+            unit="minutes"
+          />
+        ) : (
+          <ReadingBarChart
+            title="Daily reading"
+            data={dashboard.charts.daily}
+            valueKey="minutes"
+            formatValue={(minutes) => formatDurationLabel(minutes * 60)}
+          />
+        )}
+        {dashboard.charts.devices?.length && dashboard.charts.monthly_by_device?.length ? (
+          <DeviceStackedBarChart
+            title="Monthly reading by device"
+            data={dashboard.charts.monthly_by_device}
+            devices={dashboard.charts.devices}
+            unit="hours"
+          />
+        ) : (
+          <ReadingBarChart
+            title="Monthly reading"
+            data={dashboard.charts.monthly}
+            valueKey="hours"
+            formatValue={(hours) => formatDurationLabel(hours * 3600)}
+          />
+        )}
         <TopBooksChart data={dashboard.charts.top_books} />
       </section>
 
@@ -1126,12 +1338,16 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
 
 function SnapshotsView({
   snapshots,
+  devices,
   activeSnapshotId,
   onSelectSnapshot,
+  onReassignSnapshot,
 }: {
   snapshots: Snapshot[];
+  devices: DeviceSummary[];
   activeSnapshotId: string | null;
   onSelectSnapshot: (id: string) => void;
+  onReassignSnapshot: (snapshotId: string, deviceId: string) => void;
 }) {
   return (
     <Card>
@@ -1140,10 +1356,11 @@ function SnapshotsView({
       </CardHeader>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea ariaLabel="Snapshots table">
-          <Table className="min-w-[920px] table-fixed max-[560px]:min-w-[680px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
+          <Table className="min-w-[1120px] table-fixed max-[560px]:min-w-[820px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
             <TableHeader>
               <TableRow>
                 <TableHead>Imported</TableHead>
+                <TableHead>Device</TableHead>
                 <TableHead>Source</TableHead>
                 <TableHead>Size</TableHead>
                 <TableHead>Schema</TableHead>
@@ -1154,7 +1371,7 @@ function SnapshotsView({
             <TableBody>
               {snapshots.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                     No snapshots have been imported yet.
                   </TableCell>
                 </TableRow>
@@ -1162,6 +1379,25 @@ function SnapshotsView({
                 snapshots.map((snapshot) => (
                   <TableRow key={snapshot.id}>
                     <TableCell title={formatDateTime(snapshot.imported_at)}>{formatDateTime(snapshot.imported_at)}</TableCell>
+                    <TableCell title={snapshot.device_label ?? undefined}>
+                      <Select
+                        value={snapshot.device_id ?? ""}
+                        onValueChange={(deviceId) => onReassignSnapshot(snapshot.id, deviceId)}
+                      >
+                        <SelectTrigger className="h-8" aria-label={`Device for ${snapshot.id}`}>
+                          <SelectValue placeholder={snapshot.device_label ?? "Unknown device"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            {devices.map((device) => (
+                              <SelectItem key={device.id} value={device.id}>
+                                {device.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
                     <TableCell title={snapshot.source_path ?? snapshot.source}>
                       <code>{formatSnapshotSource(snapshot)}</code>
                     </TableCell>
@@ -1307,7 +1543,7 @@ function BackupsView({
                   <div className="min-w-0">
                     <CardTitle>{formatDateTime(backup.created_at)}</CardTitle>
                     <CardDescription className="truncate">
-                      {backup.koreader_version ?? "Unknown KOReader version"} / {backup.device_model ?? "Unknown device"} / {formatBytes(backup.archive_size)}
+                      {backup.device_label ?? "Unknown device"} / {backup.koreader_version ?? "Unknown KOReader version"} / {formatBytes(backup.archive_size)}
                     </CardDescription>
                   </div>
                   <CardAction>
@@ -1347,6 +1583,12 @@ function BackupsView({
                   <ErrorAlert title="Version mismatch">
                     Backup KOReader version {preview.backup.koreader_version} differs from the installed{" "}
                     {preview.current_koreader_version}.
+                  </ErrorAlert>
+                ) : null}
+                {preview.device_warning ? (
+                  <ErrorAlert title="Device mismatch">
+                    This backup was created from {preview.backup.device_label ?? "another device"}; the mounted device is{" "}
+                    {preview.current_device?.label ?? "a different device"}.
                   </ErrorAlert>
                 ) : null}
                 {preview.backup.credentials_included ? (
@@ -1622,16 +1864,21 @@ function ExportView({ dashboard }: { dashboard: Dashboard }) {
 
 function SettingsView({
   device,
+  devices,
   snapshots,
   onRefresh,
+  onRenameDevice,
 }: {
   device: DeviceStatus | null;
+  devices: DeviceSummary[];
   snapshots: Snapshot[];
   onRefresh: () => void;
+  onRenameDevice: (deviceId: string, label: string) => Promise<void>;
 }) {
   const candidateDiagnostics = (device?.candidates ?? []).filter(
     (candidate) => candidate.error || (candidate.exists && !candidate.readable),
   );
+  const [labels, setLabels] = useState<Record<string, string>>({});
 
   return (
     <Card>
@@ -1648,6 +1895,44 @@ function SettingsView({
         <div className="grid gap-3 sm:grid-cols-2">
           <MetadataCard label="Kobo mount path" value={device?.mount_path ?? "Auto-detect"} />
           <MetadataCard label="Local snapshots" value={snapshots.length} />
+        </div>
+        <div className="grid gap-3">
+          <h4 className="text-sm font-medium">Devices</h4>
+          {devices.length === 0 ? (
+            <EmptyPanel icon={<HardDrive />} title="No devices recorded yet" />
+          ) : (
+            <div className="grid gap-3">
+              {devices.map((item) => {
+                const draft = labels[item.id] ?? item.label;
+                return (
+                  <Card size="sm" key={item.id}>
+                    <CardHeader>
+                      <div className="min-w-0">
+                        <CardTitle>{item.label}</CardTitle>
+                        <CardDescription>
+                          {item.model ?? "Unknown model"} / {item.snapshot_count} snapshots / {item.backup_count} backups
+                        </CardDescription>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                      <Input
+                        value={draft}
+                        aria-label={`Label for ${item.label}`}
+                        onChange={(event) => setLabels((current) => ({ ...current, [item.id]: event.target.value }))}
+                      />
+                      <Button
+                        variant="outline"
+                        disabled={draft.trim() === "" || draft.trim() === item.label}
+                        onClick={() => onRenameDevice(item.id, draft)}
+                      >
+                        Save label
+                      </Button>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
         </div>
         {candidateDiagnostics.length > 0 ? (
           <div className="grid gap-3">
@@ -1746,9 +2031,13 @@ function AppSidebarBrand({ onSelect }: { onSelect: () => void }) {
 
 export default function App() {
   const [device, setDevice] = useState<DeviceStatus | null>(null);
+  const [devices, setDevices] = useState<DeviceSummary[]>([]);
+  const [deviceFilter, setDeviceFilter] = useState<DeviceFilter>("all");
   const [dashboard, setDashboard] = useState<Dashboard>(emptyDashboard);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [backups, setBackups] = useState<RecoveryBackup[]>([]);
+  const [importDevice, setImportDevice] = useState("auto");
+  const [importDeviceLabel, setImportDeviceLabel] = useState("");
   const [activeView, setActiveView] = useState<View>(viewFromHash);
   const [readingDateFilter, setReadingDateFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1769,12 +2058,14 @@ export default function App() {
       }
     }
     const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
-    const [dashboardData, snapshotData, backupData] = await Promise.all([
-      getDashboard(dashboardSnapshotId),
-      getSnapshots(),
-      getBackups().catch(() => null),
+    const [deviceData, dashboardData, snapshotData, backupData] = await Promise.all([
+      getDevices(),
+      getDashboard(dashboardSnapshotId, deviceFilter),
+      getSnapshots(deviceFilter),
+      getBackups(deviceFilter).catch(() => null),
     ]);
     setDevice(deviceStatus);
+    setDevices(deviceData.devices);
     setDashboard(dashboardData);
     setSnapshots(snapshotData.snapshots);
     if (backupData && Array.isArray(backupData.backups)) {
@@ -1788,8 +2079,10 @@ export default function App() {
     setError(null);
     setAutoImportError(null);
     try {
-      const selectedDashboard = await getDashboard(snapshotId);
+      const snapshotDevice = snapshots.find((snapshot) => snapshot.id === snapshotId)?.device_id ?? deviceFilter;
+      const selectedDashboard = await getDashboard(snapshotId, snapshotDevice);
       selectedSnapshotId.current = snapshotId;
+      setDeviceFilter(snapshotDevice);
       setDashboard(selectedDashboard);
       setReadingDateFilter(null);
       selectView("dashboard");
@@ -1806,7 +2099,7 @@ export default function App() {
       refresh().catch(() => undefined);
     }, 15000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [deviceFilter]);
 
   useEffect(() => {
     const syncViewFromHistory = () => {
@@ -1826,8 +2119,11 @@ export default function App() {
     setError(null);
     setAutoImportError(null);
     try {
-      const result = await importFromKobo();
+      const assignment = assignmentFromSelection(importDevice, importDeviceLabel);
+      if (assignment?.new_device_label === "") throw new Error("Enter a device name before importing.");
+      const result = await importFromKobo(assignment);
       selectedSnapshotId.current = null;
+      if (result.snapshot.device_id) setDeviceFilter(result.snapshot.device_id);
       setDashboard(result.dashboard);
       setReadingDateFilter(null);
       selectView("dashboard");
@@ -1846,8 +2142,12 @@ export default function App() {
     setError(null);
     setAutoImportError(null);
     try {
-      const result = await uploadDatabase(file);
+      const assignment = assignmentFromSelection(importDevice, importDeviceLabel);
+      if (!assignment) throw new Error("Choose a device or enter a device name before uploading.");
+      if (assignment?.new_device_label === "") throw new Error("Enter a device name before uploading.");
+      const result = await uploadDatabase(file, assignment);
       selectedSnapshotId.current = null;
+      if (result.snapshot.device_id) setDeviceFilter(result.snapshot.device_id);
       setDashboard(result.dashboard);
       setReadingDateFilter(null);
       selectView("dashboard");
@@ -1870,8 +2170,11 @@ export default function App() {
         created.backup,
         ...current.filter((backup) => backup.id !== created.backup.id),
       ]);
-      getBackups()
+      getBackups(deviceFilter)
         .then((backupData) => setBackups(backupData.backups))
+        .catch(() => undefined);
+      getDevices()
+        .then((deviceData) => setDevices(deviceData.devices))
         .catch(() => undefined);
       toast.success("Recovery backup created");
     } catch (err) {
@@ -1886,10 +2189,46 @@ export default function App() {
     setError(null);
     try {
       const result = await restoreBackup(backupId, extensions);
-      getBackups()
+      getBackups(deviceFilter)
         .then((backupData) => setBackups(backupData.backups))
         .catch(() => undefined);
+      getDevices()
+        .then((deviceData) => setDevices(deviceData.devices))
+        .catch(() => undefined);
       return result;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDeviceFilterChange(nextDeviceId: DeviceFilter) {
+    setDeviceFilter(nextDeviceId);
+    selectedSnapshotId.current = null;
+    setReadingDateFilter(null);
+  }
+
+  async function handleRenameDevice(deviceId: string, label: string) {
+    await renameDevice(deviceId, label.trim());
+    const deviceData = await getDevices();
+    setDevices(deviceData.devices);
+    toast.success("Device label saved");
+  }
+
+  async function handleReassignSnapshot(snapshotId: string, targetDeviceId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await reassignSnapshot(snapshotId, { device_id: targetDeviceId });
+      setSnapshots((current) => current.map((snapshot) => (snapshot.id === snapshotId ? result.snapshot : snapshot)));
+      if (dashboard.snapshot?.id === snapshotId) {
+        setDeviceFilter(result.snapshot.device_id ?? "all");
+        setDashboard(await getDashboard(snapshotId, result.snapshot.device_id ?? "all"));
+      }
+      const deviceData = await getDevices();
+      setDevices(deviceData.devices);
+      toast.success("Snapshot reassigned");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reassign snapshot");
     } finally {
       setBusy(false);
     }
@@ -1953,12 +2292,20 @@ export default function App() {
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
             <span className="font-medium">{navItems.find((item) => item.id === activeView)?.label}</span>
+            <div className="ml-auto">
+              <DeviceSelector devices={devices} value={deviceFilter} onChange={handleDeviceFilterChange} />
+            </div>
           </header>
           <div className="grid gap-4 p-4 md:p-6">
             <DeviceBanner
               status={device}
+              devices={devices}
+              importDevice={importDevice}
+              importDeviceLabel={importDeviceLabel}
               activeSnapshot={activeSnapshot}
               latestSnapshot={latestSnapshot}
+              onImportDeviceChange={setImportDevice}
+              onImportDeviceLabelChange={setImportDeviceLabel}
               onImport={handleImport}
               onUploadClick={() => fileInput.current?.click()}
               busy={busy}
@@ -1983,8 +2330,10 @@ export default function App() {
             {activeView === "snapshots" ? (
               <SnapshotsView
                 snapshots={snapshots}
+                devices={devices}
                 activeSnapshotId={activeSnapshot?.id ?? null}
                 onSelectSnapshot={loadSnapshot}
+                onReassignSnapshot={handleReassignSnapshot}
               />
             ) : null}
             {activeView === "backups" ? (
@@ -2012,7 +2361,13 @@ export default function App() {
             ) : null}
             {activeView === "export" ? <ExportView dashboard={dashboard} /> : null}
             {activeView === "settings" ? (
-              <SettingsView device={device} snapshots={snapshots} onRefresh={() => refresh().catch((err: Error) => setError(err.message))} />
+              <SettingsView
+                device={device}
+                devices={devices}
+                snapshots={snapshots}
+                onRefresh={() => refresh().catch((err: Error) => setError(err.message))}
+                onRenameDevice={handleRenameDevice}
+              />
             ) : null}
           </div>
         </SidebarInset>

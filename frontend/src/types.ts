@@ -15,6 +15,25 @@ export type DeviceStatus = {
   searched_mount_paths?: string[];
 };
 
+export type DeviceSummary = {
+  id: string;
+  label: string;
+  model: string | null;
+  koreader_version?: string | null;
+  source: string;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  snapshot_count: number;
+  backup_count: number;
+  last_snapshot_at: string | null;
+  last_backup_at: string | null;
+};
+
+export type DeviceAssignment = {
+  device_id?: string | null;
+  new_device_label?: string | null;
+};
+
 export type Snapshot = {
   id: string;
   imported_at: string;
@@ -27,11 +46,14 @@ export type Snapshot = {
   content_hash?: string | null;
   sidecar_path?: string | null;
   sidecar_hash?: string | null;
+  device_id?: string | null;
+  device_label?: string | null;
+  device_model?: string | null;
 };
 
 export type AutoImportResult = {
   imported: boolean;
-  reason: "changed" | "unchanged" | "not_mounted" | "database_missing" | "access_blocked";
+  reason: "changed" | "unchanged" | "not_mounted" | "database_missing" | "access_blocked" | "device_unassigned";
   snapshot: Snapshot | null;
   device: DeviceStatus;
   dashboard?: Dashboard;
@@ -46,6 +68,8 @@ export type RecoveryBackup = {
   archive_size: number;
   content_hash: string;
   koreader_version: string | null;
+  device_id?: string | null;
+  device_label?: string | null;
   device_model: string | null;
   document_metadata_folder: "doc" | "dir" | "hash";
   credentials_included: boolean;
@@ -81,6 +105,8 @@ export type RestorePreview = {
   device: DeviceStatus;
   current_koreader_version: string | null;
   version_warning: boolean;
+  device_warning?: boolean;
+  current_device?: Partial<DeviceSummary> & { id: string; label: string };
   required_bytes: number;
   available_bytes: number;
   counts: Record<string, number>;
@@ -142,6 +168,9 @@ export type Dashboard = {
     daily: Array<{ date: string; label: string; minutes: number }>;
     monthly: Array<{ month: string; label: string; hours: number }>;
     top_books: Array<{ id: string; title: string; hours: number }>;
+    devices?: Array<{ id: string; label: string }>;
+    daily_by_device?: Array<Record<string, string | number>>;
+    monthly_by_device?: Array<Record<string, string | number>>;
     calendar: {
       start_date: string | null;
       end_date: string | null;

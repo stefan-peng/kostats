@@ -29,6 +29,9 @@ class SnapshotMeta:
     content_hash: str | None = None
     sidecar_path: str | None = None
     sidecar_hash: str | None = None
+    device_id: str | None = None
+    device_label: str | None = None
+    device_model: str | None = None
 
 
 def quote_identifier(identifier: str) -> str:
@@ -650,4 +653,227 @@ def build_dashboard(
         },
         "books": book_stats,
         "recent_books": recent_books,
+    }
+
+
+def empty_dashboard() -> dict[str, Any]:
+    return {
+        "has_data": False,
+        "snapshot": None,
+        "summary": {
+            "total_time_seconds": 0,
+            "total_time_label": "0m",
+            "reading_days": 0,
+            "books": 0,
+            "pages": 0,
+            "current_streak": 0,
+            "finished_books": 0,
+            "reading_books": 0,
+            "abandoned_books": 0,
+            "highlights": 0,
+        },
+        "charts": {
+            "daily": [],
+            "monthly": [],
+            "top_books": [],
+            "calendar": {
+                "start_date": None,
+                "end_date": None,
+                "max_minutes": 0,
+                "total_days": 0,
+                "days": [],
+            },
+        },
+        "books": [],
+        "recent_books": [],
+    }
+
+
+def aggregate_dashboards(
+    dashboards: list[dict[str, Any]],
+    *,
+    snapshots: list[SnapshotMeta],
+    today: date | None = None,
+) -> dict[str, Any]:
+    dashboards = [dashboard for dashboard in dashboards if dashboard.get("has_data")]
+    if not dashboards:
+        return empty_dashboard()
+    if len(dashboards) == 1:
+        return dashboards[0]
+
+    total_seconds = sum(float(dashboard["summary"]["total_time_seconds"]) for dashboard in dashboards)
+    day_minutes: dict[str, float] = defaultdict(float)
+    day_book_ids: dict[str, set[str]] = defaultdict(set)
+    day_device_minutes: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    month_hours: dict[str, float] = defaultdict(float)
+    month_device_hours: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    books_by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    device_labels: dict[str, str] = {}
+
+    for dashboard in dashboards:
+        snapshot = dashboard.get("snapshot") or {}
+        raw_device_id = str(snapshot.get("device_id") or "unknown")
+        device_label = re.sub(r"\s+", " ", str(snapshot.get("device_label") or raw_device_id)).strip() or raw_device_id
+        device_id = raw_device_id
+        device_labels[device_id] = device_label
+        for item in dashboard["charts"]["calendar"]["days"]:
+            date_key = item["date"]
+            day_minutes[date_key] += float(item["minutes"])
+            day_device_minutes[date_key][device_id] += float(item["minutes"])
+            day_book_ids[date_key].update(f"{raw_device_id}:{book_id}" for book_id in item.get("book_ids", []))
+        for item in dashboard["charts"]["monthly"]:
+            month_hours[item["month"]] += float(item["hours"])
+            month_device_hours[item["month"]][device_id] += float(item["hours"])
+        for book in dashboard["books"]:
+            source_md5s = [value for value in book.get("source_md5s", []) if value]
+            if source_md5s:
+                key = f"md5:{source_md5s[0]}"
+            else:
+                key = f"title:{normalized_identity_text(book.get('title'))}:{normalized_identity_text(book.get('authors'))}"
+            books_by_key[key].append({**book, "_aggregate_device_id": raw_device_id})
+
+    merged_books: list[dict[str, Any]] = []
+    for group in books_by_key.values():
+        latest = max(group, key=lambda item: (item.get("last_open") or "", item.get("id") or ""))
+        time_seconds = sum(float(item.get("time_seconds") or 0) for item in group)
+        source_book_ids = sorted(
+            {
+                f"{item.get('_aggregate_device_id', 'unknown')}:{book_id}"
+                for item in group
+                for book_id in item.get("source_book_ids", [])
+            },
+            key=book_id_sort_key,
+        )
+        source_md5s = sorted({str(md5) for item in group for md5 in item.get("source_md5s", []) if md5})
+        merged = {
+            **latest,
+            "id": source_book_ids[0] if len(source_book_ids) <= 1 else stable_merged_book_id(source_book_ids),
+            "time_seconds": round(time_seconds, 2),
+            "time_label": format_duration(time_seconds),
+            "pages": sum(int(item.get("pages") or 0) for item in group),
+            "highlight_count": max(int(item.get("highlight_count") or 0) for item in group),
+            "note_count": max(int(item.get("note_count") or 0) for item in group),
+            "source_book_ids": source_book_ids,
+            "source_md5s": source_md5s,
+            "merged_count": sum(int(item.get("merged_count") or 1) for item in group),
+        }
+        merged_books.append(merged)
+
+    merged_books = sorted(merged_books, key=lambda item: item.get("last_open") or "", reverse=True)
+    merged_id_by_source: dict[str, str] = {}
+    for book in merged_books:
+        for source_book_id in book.get("source_book_ids", []):
+            merged_id_by_source[str(source_book_id)] = book["id"]
+
+    day_seconds = {key: value * 60 for key, value in day_minutes.items()}
+    sorted_days = sorted(day_seconds)
+    sorted_months = sorted(month_hours)
+    latest_days = trailing_day_keys(sorted_days)
+    latest_months = trailing_month_keys(sorted_months)
+    max_day_seconds = max(day_seconds.values(), default=0.0)
+    status_counts = {
+        status: sum(1 for book in merged_books if effective_book_status(book) == status)
+        for status in ("complete", "reading", "abandoned")
+    }
+    latest_snapshot = max(snapshots, key=lambda item: item.imported_at)
+
+    return {
+        "has_data": True,
+        "snapshot": {
+            **latest_snapshot.__dict__,
+            "id": "aggregate",
+            "source": "aggregate",
+            "source_path": "All devices",
+            "device_id": "all",
+            "device_label": "All devices",
+        },
+        "summary": {
+            "total_time_seconds": round(total_seconds, 2),
+            "total_time_label": format_duration(total_seconds),
+            "reading_days": len(day_seconds),
+            "books": len(merged_books),
+            "pages": sum(int(book.get("pages") or 0) for book in merged_books),
+            "current_streak": current_streak(set(day_seconds), today=today),
+            "finished_books": status_counts["complete"],
+            "reading_books": status_counts["reading"],
+            "abandoned_books": status_counts["abandoned"],
+            "highlights": sum(int(book.get("highlight_count") or 0) for book in merged_books),
+        },
+        "charts": {
+            "daily": [
+                {
+                    "date": key,
+                    "label": day_label(key),
+                    "minutes": seconds_to_minutes(day_seconds.get(key, 0.0)),
+                }
+                for key in latest_days
+            ],
+            "monthly": [
+                {
+                    "month": key,
+                    "label": month_label(key),
+                    "hours": month_hours.get(key, 0.0),
+                }
+                for key in latest_months
+            ],
+            "daily_by_device": [
+                {
+                    "date": key,
+                    "label": day_label(key),
+                    **{
+                        device_id: round(day_device_minutes[key].get(device_id, 0.0), 2)
+                        for device_id in sorted(device_labels)
+                    },
+                }
+                for key in latest_days
+            ],
+            "monthly_by_device": [
+                {
+                    "month": key,
+                    "label": month_label(key),
+                    **{
+                        device_id: round(month_device_hours[key].get(device_id, 0.0), 2)
+                        for device_id in sorted(device_labels)
+                    },
+                }
+                for key in latest_months
+            ],
+            "devices": [
+                {"id": device_id, "label": device_labels[device_id]}
+                for device_id in sorted(device_labels, key=lambda key: device_labels[key])
+            ],
+            "top_books": [
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "hours": seconds_to_hours(float(item.get("time_seconds") or 0)),
+                }
+                for item in sorted(merged_books, key=lambda item: item["time_seconds"], reverse=True)[:10]
+            ],
+            "calendar": {
+                "start_date": sorted_days[0] if sorted_days else None,
+                "end_date": sorted_days[-1] if sorted_days else None,
+                "max_minutes": seconds_to_minutes(max_day_seconds),
+                "total_days": len(sorted_days),
+                "days": [
+                    {
+                        "date": key,
+                        "label": day_label(key, include_year=True),
+                        "minutes": seconds_to_minutes(day_seconds[key]),
+                        "time_label": format_duration(day_seconds[key]),
+                        "level": calendar_level(day_seconds[key], max_day_seconds),
+                        "book_ids": sorted(
+                            {
+                                merged_id_by_source.get(source_book_id, source_book_id)
+                                for source_book_id in day_book_ids[key]
+                            },
+                            key=book_id_sort_key,
+                        ),
+                    }
+                    for key in sorted_days
+                ],
+            },
+        },
+        "books": merged_books,
+        "recent_books": merged_books[:20],
     }

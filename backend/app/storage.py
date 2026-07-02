@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import data_dir
+from .devices import DeviceRegistry
 from .errors import ImportError, UnsupportedSchemaError
 from .sqlite_stats import SnapshotMeta, build_dashboard, read_user_version
 
@@ -43,10 +44,41 @@ class SnapshotStore:
     def list_snapshots(self) -> list[dict[str, Any]]:
         manifest = self.load_manifest()
         return sorted(
-            manifest["snapshots"],
+            [self.with_device_defaults(item) for item in manifest["snapshots"]],
             key=lambda item: item["imported_at"],
             reverse=True,
         )
+
+    def list_snapshots_for_device(self, device_id: str | None = None) -> list[dict[str, Any]]:
+        snapshots = self.list_snapshots()
+        if not device_id or device_id == "all":
+            return snapshots
+        return [snapshot for snapshot in snapshots if snapshot.get("device_id") == device_id]
+
+    def latest_per_device(self) -> list[SnapshotMeta]:
+        latest: dict[str, dict[str, Any]] = {}
+        for snapshot in self.list_snapshots():
+            device_id = snapshot.get("device_id") or ""
+            if device_id and device_id not in latest:
+                latest[device_id] = snapshot
+        return [SnapshotMeta(**item) for item in latest.values()]
+
+    def with_device_defaults(self, item: dict[str, Any]) -> dict[str, Any]:
+        registry = DeviceRegistry(self.root)
+        fallback = registry.legacy_device_for_source(item.get("source"))
+        device_id = item.get("device_id") or fallback["id"]
+        device = registry.resolve(device_id)
+        registry_device = device is not None
+        assigned_label = item.get("device_label")
+        assigned_model = item.get("device_model")
+        if device is None:
+            device = {**fallback, "id": device_id}
+        return {
+            **item,
+            "device_id": device_id,
+            "device_label": (device.get("label") if registry_device else assigned_label) or device.get("label"),
+            "device_model": (device.get("model") if registry_device else assigned_model) or device.get("model"),
+        }
 
     def latest(self) -> SnapshotMeta | None:
         snapshots = self.list_snapshots()
@@ -59,7 +91,19 @@ class SnapshotStore:
             return self.latest()
         for item in self.load_manifest()["snapshots"]:
             if item["id"] == snapshot_id:
-                return SnapshotMeta(**item)
+                return SnapshotMeta(**self.with_device_defaults(item))
+        return None
+
+    def assign_device(self, snapshot_id: str, device: dict[str, Any]) -> SnapshotMeta | None:
+        manifest = self.load_manifest()
+        for item in manifest["snapshots"]:
+            if item["id"] != snapshot_id:
+                continue
+            item["device_id"] = device["id"]
+            item["device_label"] = device["label"]
+            item["device_model"] = device.get("model")
+            self.save_manifest(manifest)
+            return SnapshotMeta(**self.with_device_defaults(item))
         return None
 
     def snapshot_content_hash(self, snapshot: SnapshotMeta | None) -> str | None:
@@ -79,6 +123,7 @@ class SnapshotStore:
         source_kind: str,
         source_path: str | None = None,
         sidecar_payload: bytes | None = None,
+        device: dict[str, Any] | None = None,
     ) -> SnapshotMeta:
         self.ensure()
         if not source.exists():
@@ -116,6 +161,7 @@ class SnapshotStore:
             content_hash=content_hash,
             sidecar_destination=sidecar_destination,
             sidecar_hash=sidecar_hash,
+            device=device,
         )
 
     def import_snapshot_copy(
@@ -127,6 +173,7 @@ class SnapshotStore:
         content_hash: str | None = None,
         sidecar_source: Path | None = None,
         sidecar_hash: str | None = None,
+        device: dict[str, Any] | None = None,
     ) -> SnapshotMeta:
         self.ensure()
         if not source.exists():
@@ -155,6 +202,7 @@ class SnapshotStore:
             content_hash=content_hash,
             sidecar_destination=sidecar_destination,
             sidecar_hash=sidecar_hash,
+            device=device,
         )
 
     def next_snapshot_destination(self) -> tuple[str, str, Path]:
@@ -176,7 +224,9 @@ class SnapshotStore:
         content_hash: str | None = None,
         sidecar_destination: Path | None = None,
         sidecar_hash: str | None = None,
+        device: dict[str, Any] | None = None,
     ) -> SnapshotMeta:
+        device = device or DeviceRegistry(self.root).legacy_device_for_source(source_kind)
         try:
             user_version = read_user_version(destination)
             meta = SnapshotMeta(
@@ -191,6 +241,9 @@ class SnapshotStore:
                 content_hash=content_hash or hash_file(destination),
                 sidecar_path=str(sidecar_destination) if sidecar_destination else None,
                 sidecar_hash=sidecar_hash or (hash_file(sidecar_destination) if sidecar_destination else None),
+                device_id=device.get("id") if device else None,
+                device_label=device.get("label") if device else None,
+                device_model=device.get("model") if device else None,
             )
             build_dashboard(destination, meta)
         except UnsupportedSchemaError:

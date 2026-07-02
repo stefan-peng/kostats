@@ -29,6 +29,12 @@
   --chart-3: #83cf8d;
   --chart-4: #176c2c;
   --chart-5: #c9e8cf;
+  --device-chart-1: #1d4ed8;
+  --device-chart-2: #dc2626;
+  --device-chart-3: #15803d;
+  --device-chart-4: #7c3aed;
+  --device-chart-5: #c2410c;
+  --device-chart-6: #0f766e;
   --radius: 0.625rem;
   --sidebar: #fbfcfb;
   --sidebar-foreground: #303a34;
@@ -70,6 +76,12 @@
   --chart-3: #3fa95a;
   --chart-4: #86e896;
   --chart-5: #173a22;
+  --device-chart-1: #60a5fa;
+  --device-chart-2: #f87171;
+  --device-chart-3: #4ade80;
+  --device-chart-4: #c084fc;
+  --device-chart-5: #fb923c;
+  --device-chart-6: #2dd4bf;
   --sidebar: #111613;
   --sidebar-foreground: #d2ddd6;
   --sidebar-primary: var(--primary);

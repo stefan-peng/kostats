@@ -13,6 +13,7 @@ from .config import (
     kobo_volume_is_configured,
     kobo_volume_is_default_mount_path,
 )
+from .devices import DeviceRegistry, detect_device_identity
 from .errors import ImportError
 from .storage import SnapshotStore, combined_content_hash, copy_sqlite_database, hash_file
 from .sidecars import build_sidecar_snapshot, serialize_sidecar_snapshot, sidecar_snapshot_hash
@@ -97,7 +98,7 @@ def device_status(volume: Path | None = None) -> dict[str, Any]:
     }
 
 
-def import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> dict[str, Any]:
+def import_from_kobo(store: SnapshotStore, volume: Path | None = None, device: dict[str, Any] | None = None) -> dict[str, Any]:
     status = device_status(volume)
     if not status["mounted"]:
         raise ImportError(f"Kobo is not mounted at {status['mount_path']}")
@@ -111,12 +112,14 @@ def import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> dict[s
 
     root = Path(status["mount_path"])
     with DEVICE_LOCK:
+        device = device or DeviceRegistry(store.root).ensure_for_volume(root)
         sidecar_payload = serialize_sidecar_snapshot(build_sidecar_snapshot(root))
         meta = store.import_file(
             Path(status["selected_path"]),
             source_kind="kobo",
             source_path=status["selected_path"],
             sidecar_payload=sidecar_payload,
+            device=device,
         )
     return {"snapshot": meta.__dict__, "device": status}
 
@@ -140,6 +143,12 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
 
     source = Path(status["selected_path"])
     with AUTO_IMPORT_LOCK:
+        registry = DeviceRegistry(store.root)
+        detected = detect_device_identity(Path(status["mount_path"]))
+        device = registry.resolve(str(detected["id"]))
+        if device is None:
+            result["reason"] = "device_unassigned"
+            return result
         with tempfile.TemporaryDirectory(prefix="kostats-auto-import-") as tmp_dir:
             prepared = Path(tmp_dir) / "statistics.sqlite3"
             prepared_sidecars = Path(tmp_dir) / "sidecars.json"
@@ -166,6 +175,7 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
                 content_hash=prepared_hash,
                 sidecar_source=prepared_sidecars,
                 sidecar_hash=prepared_sidecar_hash,
+                device=device,
             )
 
     return {

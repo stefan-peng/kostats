@@ -98,6 +98,9 @@ const populatedDashboard = {
     file_size: 4096,
     user_version: 24,
     schema_version: "24",
+    device_id: "primary-kobo",
+    device_label: "Primary Kobo",
+    device_model: "Kobo_monza",
   },
   summary: {
     total_time_seconds: 5400,
@@ -225,6 +228,9 @@ const olderSnapshot = {
   imported_at: "2026-05-01T09:00:00Z",
   source_path: "older-statistics.sqlite3",
   path: "/tmp/older-statistics.sqlite3",
+  device_id: "travel-kobo",
+  device_label: "Travel Kobo",
+  device_model: "Kobo_libra",
 };
 
 const olderDashboard = {
@@ -285,6 +291,8 @@ const recoveryBackup = {
   archive_size: 8192,
   content_hash: "backup-hash",
   koreader_version: "v2026.03",
+  device_id: "primary-kobo",
+  device_label: "Primary Kobo",
   device_model: "Kobo_monza",
   document_metadata_folder: "doc",
   credentials_included: true,
@@ -297,10 +305,50 @@ const recoveryBackup = {
   },
 };
 
+const deviceSummary = {
+  id: "primary-kobo",
+  label: "Primary Kobo",
+  model: "Kobo_monza",
+  koreader_version: "v2026.03",
+  source: "kobo",
+  first_seen: "2026-06-01T12:00:00Z",
+  last_seen: "2026-06-01T12:00:00Z",
+  snapshot_count: 1,
+  backup_count: 1,
+  last_snapshot_at: "2026-06-01T12:00:00Z",
+  last_backup_at: "2026-06-10T12:00:00Z",
+};
+
+const travelDeviceSummary = {
+  id: "travel-kobo",
+  label: "Travel Kobo",
+  model: "Kobo_libra",
+  koreader_version: "v2026.03",
+  source: "kobo",
+  first_seen: "2026-05-01T09:00:00Z",
+  last_seen: "2026-05-01T09:00:00Z",
+  snapshot_count: 1,
+  backup_count: 0,
+  last_snapshot_at: "2026-05-01T09:00:00Z",
+  last_backup_at: null,
+};
+
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.startsWith("/api/devices")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ devices: [deviceSummary, travelDeviceSummary] }),
+      });
+    }
     const result = handler(url, init);
+    if (url.startsWith("/api/backups") && result === undefined) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ backups: [] }),
+      });
+    }
     if (result instanceof Error) {
       return Promise.resolve({
         ok: false,
@@ -975,7 +1023,7 @@ describe("App", () => {
     const expectedTableMaxHeight = `${window.innerHeight - 53}px`;
     await screen.findByRole("table");
     const recentRegion = screen.getByRole("region", { name: "Recent books table" });
-    expect(recentRegion).toHaveStyle({ maxHeight: expectedTableMaxHeight });
+    expect(recentRegion).not.toHaveStyle({ maxHeight: expectedTableMaxHeight });
     expect(screen.getByRole("region", { name: "Recent books table" })).toHaveAttribute("tabindex", "0");
 
     await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
@@ -1060,7 +1108,7 @@ describe("App", () => {
     expect(within(rows[1]).getByText("Notes on a Small Planet")).toBeInTheDocument();
   });
 
-  it("keeps a taller recent books table height during page scroll without exceeding the viewport", async () => {
+  it("keeps recent books uncapped so its horizontal scrollbar stays at the table bottom", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
         return {
@@ -1092,7 +1140,7 @@ describe("App", () => {
 
     await screen.findByRole("table");
     const tableRegion = screen.getByRole("region", { name: "Recent books table" });
-    expect(tableRegion).toHaveStyle({ maxHeight: "322px" });
+    expect(tableRegion).not.toHaveStyle({ maxHeight: "322px" });
 
     rectSpy.mockReturnValue({
       bottom: 0,
@@ -1107,12 +1155,12 @@ describe("App", () => {
     });
     act(() => window.dispatchEvent(new Event("scroll")));
 
-    expect(tableRegion).toHaveStyle({ maxHeight: "322px" });
+    expect(tableRegion).not.toHaveStyle({ maxHeight: "322px" });
 
     vi.spyOn(window, "innerHeight", "get").mockReturnValue(200);
     act(() => window.dispatchEvent(new Event("resize")));
 
-    expect(tableRegion).toHaveStyle({ maxHeight: "147px" });
+    expect(tableRegion).not.toHaveStyle({ maxHeight: "147px" });
   });
 
   it("keeps sparse page panels from stretching to fill the viewport", async () => {
@@ -1237,6 +1285,7 @@ describe("App", () => {
     expect(deviceBanner.getByText(/May 1, 2026/)).toBeInTheDocument();
     expect(deviceBanner.getByText("Latest")).toBeInTheDocument();
     expect(deviceBanner.getByText(/May 31, 2026/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo");
   });
 
   it("preserves a selected snapshot when refresh auto-imports a newer database", async () => {
@@ -1317,7 +1366,7 @@ describe("App", () => {
           device: mountedStatus,
         };
       }
-      if (url === "/api/backups") return { backups: [recoveryBackup] };
+      if (url.startsWith("/api/backups?")) return { backups: [recoveryBackup] };
       if (url === "/api/backups/kobo") return { created: false, backup: recoveryBackup };
       if (url.endsWith("/restore-preview")) {
         return {

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
+from .devices import DeviceRegistry
 from .device import DEVICE_LOCK, device_status
 from .errors import BackupError
 from .lua_table import LuaTableError, decode_string, parse_lua_table
@@ -306,13 +307,34 @@ class RecoveryBackupStore:
 
     def list_backups(self) -> list[dict[str, Any]]:
         return sorted(
-            self.load_index()["backups"],
+            [self.with_device_defaults(item) for item in self.load_index()["backups"]],
             key=lambda item: item["created_at"],
             reverse=True,
         )
 
+    def list_backups_for_device(self, device_id: str | None = None) -> list[dict[str, Any]]:
+        backups = self.list_backups()
+        if not device_id or device_id == "all":
+            return backups
+        return [backup for backup in backups if backup.get("device_id") == device_id]
+
+    def with_device_defaults(self, item: dict[str, Any]) -> dict[str, Any]:
+        registry = DeviceRegistry(self.root)
+        fallback = registry.legacy_device_for_source(None)
+        device_id = item.get("device_id") or fallback["id"]
+        device = registry.resolve(device_id)
+        if device is None:
+            device = {**fallback, "id": device_id}
+        return {
+            **item,
+            "device_id": device_id,
+            "device_label": device.get("label") or item.get("device_label"),
+            "device_model": device.get("model") or item.get("device_model"),
+        }
+
     def resolve(self, identifier: str) -> dict[str, Any] | None:
-        return next((item for item in self.load_index()["backups"] if item["id"] == identifier), None)
+        backup = next((item for item in self.load_index()["backups"] if item["id"] == identifier), None)
+        return self.with_device_defaults(backup) if backup else None
 
     def create_from_kobo(
         self,
@@ -342,6 +364,7 @@ class RecoveryBackupStore:
         temporary_databases: list[Path] = []
         sidecars: list[dict[str, Any]] = []
         credentials_included = False
+        device = DeviceRegistry(self.root).ensure_for_volume(volume)
 
         def add_path(source_path: Path, archive_name: str, category: str) -> None:
             nonlocal credentials_included
@@ -406,7 +429,9 @@ class RecoveryBackupStore:
             "source": source,
             "source_mount": str(volume),
             "koreader_version": detect_koreader_version(koreader_root),
-            "device_model": detect_device_model(koreader_root),
+            "device_id": device["id"],
+            "device_label": device["label"],
+            "device_model": device.get("model") or detect_device_model(koreader_root),
             "document_metadata_folder": document_metadata_mode(koreader_root),
             "credentials_included": credentials_included,
             "counts": dict(counts),
@@ -463,7 +488,12 @@ class RecoveryBackupStore:
         with self._index_lock:
             index = self.load_index()
             duplicate = next(
-                (item for item in index["backups"] if item.get("content_hash") == manifest["content_hash"]),
+                (
+                    item
+                    for item in index["backups"]
+                    if item.get("content_hash") == manifest["content_hash"]
+                    and item.get("device_id") == manifest.get("device_id")
+                ),
                 None,
             )
             if duplicate and not force:
@@ -484,6 +514,8 @@ class RecoveryBackupStore:
             "archive_size": archive_path.stat().st_size,
             "content_hash": manifest["content_hash"],
             "koreader_version": manifest["koreader_version"],
+            "device_id": manifest.get("device_id"),
+            "device_label": manifest.get("device_label"),
             "device_model": manifest["device_model"],
             "document_metadata_folder": manifest["document_metadata_folder"],
             "credentials_included": manifest["credentials_included"],
@@ -532,6 +564,7 @@ class RecoveryBackupStore:
             archive.close()
         matches = match_sidecars(root, manifest.get("sidecars", []))
         current_version = detect_koreader_version(root / ".adds/koreader")
+        current_device = DeviceRegistry(self.root).ensure_for_volume(root)
         backup_version = manifest.get("koreader_version")
         required_bytes = sum(item.get("size", 0) for item in manifest.get("payloads", []))
         return {
@@ -539,6 +572,8 @@ class RecoveryBackupStore:
             "device": status,
             "current_koreader_version": current_version,
             "version_warning": bool(backup_version and current_version and backup_version != current_version),
+            "device_warning": bool(manifest.get("device_id") and manifest.get("device_id") != current_device["id"]),
+            "current_device": current_device,
             "required_bytes": required_bytes,
             "available_bytes": shutil.disk_usage(root).free,
             "counts": manifest.get("counts", {}),

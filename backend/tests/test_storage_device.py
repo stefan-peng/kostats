@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from backend.app import config
+from backend.app.devices import DeviceRegistry
 from backend.app.device import CandidateStatus, auto_import_from_kobo, device_status, import_from_kobo
 from backend.app.errors import ImportError, UnsupportedSchemaError
 from backend.app.storage import SnapshotStore, copy_sqlite_database
@@ -35,6 +36,10 @@ def add_reading_row(path: Path, *, book_id: int, title: str, duration: int) -> N
     )
     conn.commit()
     conn.close()
+
+
+def register_auto_import_device(store: SnapshotStore, volume: Path) -> None:
+    DeviceRegistry(store.root).ensure_for_volume(volume)
 
 
 def write_sidecar(volume: Path, *, status: str, percent: float = 0.5) -> Path:
@@ -273,6 +278,7 @@ def test_auto_import_from_kobo_imports_only_when_database_changes(tmp_path: Path
     create_db(db_path)
     add_reading_row(db_path, book_id=1, title="Dune", duration=1200)
     store = SnapshotStore(tmp_path / "data")
+    register_auto_import_device(store, volume)
 
     first = auto_import_from_kobo(store, volume)
     second = auto_import_from_kobo(store, volume)
@@ -298,6 +304,7 @@ def test_auto_import_from_kobo_detects_sidecar_only_changes(tmp_path: Path) -> N
     add_reading_row(db_path, book_id=1, title="Test Book", duration=1200)
     sidecar = write_sidecar(volume, status="reading")
     store = SnapshotStore(tmp_path / "data")
+    register_auto_import_device(store, volume)
 
     first = auto_import_from_kobo(store, volume)
     second = auto_import_from_kobo(store, volume)
@@ -320,6 +327,7 @@ def test_auto_import_holds_device_lock_while_reading_kobo(
     create_db(db_path)
     add_reading_row(db_path, book_id=1, title="Dune", duration=1200)
     store = SnapshotStore(tmp_path / "data")
+    register_auto_import_device(store, volume)
     lock_held = False
 
     class TrackingLock:
@@ -367,12 +375,27 @@ def test_auto_import_from_kobo_without_mount_does_not_create_snapshot(tmp_path: 
     assert store.list_snapshots() == []
 
 
+def test_auto_import_from_unknown_device_waits_for_manual_assignment(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    add_reading_row(db_path, book_id=1, title="Dune", duration=1200)
+    store = SnapshotStore(tmp_path / "data")
+
+    result = auto_import_from_kobo(store, volume)
+
+    assert result["imported"] is False
+    assert result["reason"] == "device_unassigned"
+    assert store.list_snapshots() == []
+
+
 def test_concurrent_auto_import_from_kobo_does_not_duplicate_snapshot(tmp_path: Path) -> None:
     volume = tmp_path / "KOBOeReader"
     db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
     create_db(db_path)
     add_reading_row(db_path, book_id=1, title="Dune", duration=1200)
     store = SnapshotStore(tmp_path / "data")
+    register_auto_import_device(store, volume)
     barrier = threading.Barrier(2)
     results = []
     errors = []
