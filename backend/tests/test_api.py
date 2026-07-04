@@ -18,6 +18,7 @@ def create_api_fixture(
     authors: str = "Octavia E. Butler",
     start_time: int = 1769904000,
     duration: int = 1200,
+    md5: str | None = None,
 ) -> None:
     conn = sqlite3.connect(path)
     conn.executescript(
@@ -27,7 +28,8 @@ def create_api_fixture(
             title TEXT,
             authors TEXT,
             last_open INTEGER,
-            pages INTEGER
+            pages INTEGER,
+            md5 TEXT
         );
         CREATE TABLE page_stat (
             id_book INTEGER,
@@ -37,7 +39,7 @@ def create_api_fixture(
         );
         """
     )
-    conn.execute("INSERT INTO book VALUES (1, ?, ?, ?, 288)", (title, authors, start_time))
+    conn.execute("INSERT INTO book VALUES (1, ?, ?, ?, 288, ?)", (title, authors, start_time, md5))
     conn.execute("INSERT INTO page_stat VALUES (1, 1, ?, ?)", (start_time, duration))
     conn.commit()
     conn.close()
@@ -248,6 +250,43 @@ def test_devices_and_dashboard_can_filter_multiple_kobos(monkeypatch, tmp_path: 
     assert filtered["summary"]["total_time_label"] == "20m"
     assert [book["title"] for book in filtered["books"]] == ["Kindred"]
     assert len(client.get(f"/api/snapshots?device_id={first_device['id']}").json()["snapshots"]) == 1
+
+
+def test_aggregate_books_merge_different_md5_versions_by_identity(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    first_source = tmp_path / "first.sqlite3"
+    create_api_fixture(first_source, title="Kindred", duration=1200, md5="first-version")
+    second_source = tmp_path / "second.sqlite3"
+    create_api_fixture(second_source, title="Kindred", duration=1800, md5="second-version")
+    SnapshotStore(data_root).import_file(
+        first_source,
+        source_kind="kobo",
+        source_path="first.sqlite3",
+        device={"id": "device-a", "label": "Kobo A", "model": None},
+    )
+    SnapshotStore(data_root).import_file(
+        second_source,
+        source_kind="kobo",
+        source_path="second.sqlite3",
+        device={"id": "device-b", "label": "Kobo B", "model": None},
+    )
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    client = TestClient(app)
+
+    dashboard = client.get("/api/dashboard").json()
+
+    assert dashboard["summary"]["total_time_label"] == "50m"
+    assert len(dashboard["books"]) == 1
+    assert dashboard["books"][0]["title"] == "Kindred"
+    assert dashboard["books"][0]["source_md5s"] == ["first-version", "second-version"]
+    assert dashboard["books"][0]["merged_count"] == 2
+    assert not {
+        "_aggregate_device_id",
+        "title_key",
+        "authors_key",
+        "series_key",
+        "language_key",
+    } & set(dashboard["books"][0])
 
 
 def test_aggregate_device_charts_merge_duplicate_labels(monkeypatch, tmp_path: Path) -> None:

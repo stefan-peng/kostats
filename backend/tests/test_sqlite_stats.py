@@ -288,7 +288,9 @@ def create_duplicate_books_db(path: Path) -> None:
             (9, 'Series Conflict', 'Careful Writer', 1770077160, 100, 's1', 'One', 'en'),
             (10, 'Series Conflict', 'Careful Writer', 1770077220, 100, 's2', 'Two', 'en'),
             (11, 'Similar Title', 'Same Author', 1770077280, 100, 't1', NULL, 'en'),
-            (12, 'Similar Title: Subtitle', 'Same Author', 1770077340, 100, 't2', NULL, 'en');
+            (12, 'Similar Title: Subtitle', 'Same Author', 1770077340, 100, 't2', NULL, 'en'),
+            (13, 'Unknown Author Duplicate', '<unknown>', 1770077400, 100, 'u1', 'N/A', 'en-US'),
+            (14, 'Unknown Author Duplicate', 'Known Writer', 1770077460, 120, 'u2', NULL, 'en');
         INSERT INTO page_stat_data VALUES
             (1, 10, 1769904000, 100, 100),
             (1, 11, 1769904060, 200, 100),
@@ -303,7 +305,9 @@ def create_duplicate_books_db(path: Path) -> None:
             (9, 1, 1770077160, 60, 100),
             (10, 1, 1770077220, 60, 100),
             (11, 1, 1770077280, 60, 100),
-            (12, 1, 1770077340, 60, 100);
+            (12, 1, 1770077340, 60, 100),
+            (13, 1, 1770077400, 60, 100),
+            (14, 2, 1770077460, 120, 120);
         """
     )
     conn.commit()
@@ -502,10 +506,10 @@ def test_duplicate_book_records_merge_conservatively(tmp_path: Path) -> None:
     dashboard = build_dashboard(db_path)
     merged = next(book for book in dashboard["books"] if book["title"] == "Merged Work")
 
-    assert dashboard["summary"]["books"] == 11
-    assert len(dashboard["books"]) == 11
-    assert len(dashboard["recent_books"]) == 11
-    assert dashboard["summary"]["pages"] == 14
+    assert dashboard["summary"]["books"] == 12
+    assert len(dashboard["books"]) == 12
+    assert len(dashboard["recent_books"]) == 12
+    assert dashboard["summary"]["pages"] == 16
     assert dashboard["charts"]["top_books"][0]["id"] == merged["id"]
     merged_calendar_days = [
         day
@@ -524,6 +528,12 @@ def test_duplicate_book_records_merge_conservatively(tmp_path: Path) -> None:
     assert merged["source_md5s"] == ["aaa", "bbb"]
     assert merged["merged_count"] == 2
 
+    unknown_author = next(book for book in dashboard["books"] if book["title"] == "Unknown Author Duplicate")
+    assert unknown_author["authors"] == "Known Writer"
+    assert unknown_author["source_book_ids"] == ["13", "14"]
+    assert unknown_author["source_md5s"] == ["u1", "u2"]
+    assert unknown_author["merged_count"] == 2
+
 
 def test_duplicate_book_false_positive_controls(tmp_path: Path) -> None:
     db_path = tmp_path / "statistics.sqlite3"
@@ -541,7 +551,12 @@ def test_duplicate_book_false_positive_controls(tmp_path: Path) -> None:
     assert len(groups[("Series Conflict", "Careful Writer")]) == 2
     assert len(groups[("Similar Title", "Same Author")]) == 1
     assert len(groups[("Similar Title: Subtitle", "Same Author")]) == 1
-    assert all(book["merged_count"] == 1 for books in groups.values() for book in books if book["title"] != "Merged Work")
+    assert all(
+        book["merged_count"] == 1
+        for books in groups.values()
+        for book in books
+        if book["title"] not in {"Merged Work", "Unknown Author Duplicate"}
+    )
 
 
 def test_sidecar_status_and_exact_progress_override_page_progress(tmp_path: Path) -> None:

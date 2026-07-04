@@ -173,6 +173,7 @@ def format_duration(seconds: float) -> str:
 
 
 PLACEHOLDER_BOOK_KEYS = {
+    "<unknown>",
     "n/a",
     "na",
     "none",
@@ -205,7 +206,32 @@ def real_book_identity_key(value: Any) -> str | None:
 
 
 def optional_metadata_key(value: Any) -> str | None:
-    return normalized_identity_text(value)
+    return real_book_identity_key(value)
+
+
+def language_identity_key(value: Any) -> str | None:
+    key = optional_metadata_key(value)
+    if key is None:
+        return None
+    return key.split("-", 1)[0].split("_", 1)[0] or None
+
+
+def can_merge_title_group(group: list[str], books: dict[str, dict[str, Any]]) -> bool:
+    real_author_keys = {books[book_id]["authors_key"] for book_id in group if books[book_id]["authors_key"]}
+    if len(real_author_keys) != 1:
+        return False
+    series_keys = {books[book_id]["series_key"] for book_id in group if books[book_id]["series_key"]}
+    language_keys = {books[book_id]["language_key"] for book_id in group if books[book_id]["language_key"]}
+    return len(series_keys) <= 1 and len(language_keys) <= 1
+
+
+def book_identity_fields(book: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title_key": real_book_identity_key(book.get("title")),
+        "authors_key": real_book_identity_key(book.get("authors")),
+        "series_key": optional_metadata_key(book.get("series")),
+        "language_key": language_identity_key(book.get("language")),
+    }
 
 
 def book_id_sort_key(value: str) -> tuple[int, int | str]:
@@ -435,7 +461,7 @@ def build_dashboard(
                 "authors_key": real_book_identity_key(row["authors"]),
                 "md5": display_text(row["md5"], ""),
                 "series_key": optional_metadata_key(row["series"]),
-                "language_key": optional_metadata_key(row["language"]),
+                "language_key": language_identity_key(row["language"]),
                 "series": display_text(row["series"], ""),
                 "language": display_text(row["language"], ""),
                 "last_open_timestamp": 0.0,
@@ -487,11 +513,14 @@ def build_dashboard(
     merger = UnionFind(list(books))
     md5_groups: dict[str, list[str]] = defaultdict(list)
     title_author_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    title_groups: dict[str, list[str]] = defaultdict(list)
 
     for book_id, book in books.items():
         md5 = book["md5"]
         if md5:
             md5_groups[md5].append(book_id)
+        if book["title_key"]:
+            title_groups[book["title_key"]].append(book_id)
         if book["title_key"] and book["authors_key"]:
             title_author_groups[(book["title_key"], book["authors_key"])].append(book_id)
 
@@ -505,6 +534,12 @@ def build_dashboard(
         series_keys = {books[book_id]["series_key"] for book_id in group if books[book_id]["series_key"]}
         language_keys = {books[book_id]["language_key"] for book_id in group if books[book_id]["language_key"]}
         if len(series_keys) > 1 or len(language_keys) > 1:
+            continue
+        for book_id in group[1:]:
+            merger.union(group[0], book_id)
+
+    for group in title_groups.values():
+        if len(group) < 2 or not can_merge_title_group(group, books):
             continue
         for book_id in group[1:]:
             merger.union(group[0], book_id)
@@ -707,7 +742,7 @@ def aggregate_dashboards(
     day_device_minutes: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     month_hours: dict[str, float] = defaultdict(float)
     month_device_hours: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    books_by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    aggregate_books: list[dict[str, Any]] = []
     device_labels: dict[str, str] = {}
 
     for dashboard in dashboards:
@@ -725,12 +760,43 @@ def aggregate_dashboards(
             month_hours[item["month"]] += float(item["hours"])
             month_device_hours[item["month"]][device_id] += float(item["hours"])
         for book in dashboard["books"]:
-            source_md5s = [value for value in book.get("source_md5s", []) if value]
-            if source_md5s:
-                key = f"md5:{source_md5s[0]}"
-            else:
-                key = f"title:{normalized_identity_text(book.get('title'))}:{normalized_identity_text(book.get('authors'))}"
-            books_by_key[key].append({**book, "_aggregate_device_id": raw_device_id})
+            aggregate_books.append({**book, **book_identity_fields(book), "_aggregate_device_id": raw_device_id})
+
+    aggregate_ids = [str(index) for index in range(len(aggregate_books))]
+    aggregate_merger = UnionFind(aggregate_ids)
+    md5_groups: dict[str, list[str]] = defaultdict(list)
+    title_author_groups: dict[tuple[str, str], list[str]] = defaultdict(list)
+    title_groups: dict[str, list[str]] = defaultdict(list)
+
+    for index, book in enumerate(aggregate_books):
+        book_id = str(index)
+        for md5 in book.get("source_md5s", []):
+            if md5:
+                md5_groups[str(md5)].append(book_id)
+        if book["title_key"]:
+            title_groups[book["title_key"]].append(book_id)
+        if book["title_key"] and book["authors_key"]:
+            title_author_groups[(book["title_key"], book["authors_key"])].append(book_id)
+
+    aggregate_books_by_id = {str(index): book for index, book in enumerate(aggregate_books)}
+
+    for group in md5_groups.values():
+        for book_id in group[1:]:
+            aggregate_merger.union(group[0], book_id)
+    for group in title_author_groups.values():
+        if len(group) < 2 or not can_merge_title_group(group, aggregate_books_by_id):
+            continue
+        for book_id in group[1:]:
+            aggregate_merger.union(group[0], book_id)
+    for group in title_groups.values():
+        if len(group) < 2 or not can_merge_title_group(group, aggregate_books_by_id):
+            continue
+        for book_id in group[1:]:
+            aggregate_merger.union(group[0], book_id)
+
+    books_by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for book_id, book in zip(aggregate_ids, aggregate_books):
+        books_by_key[aggregate_merger.find(book_id)].append(book)
 
     merged_books: list[dict[str, Any]] = []
     for group in books_by_key.values():
@@ -757,6 +823,8 @@ def aggregate_dashboards(
             "source_md5s": source_md5s,
             "merged_count": sum(int(item.get("merged_count") or 1) for item in group),
         }
+        for key in ("_aggregate_device_id", "title_key", "authors_key", "series_key", "language_key"):
+            merged.pop(key, None)
         merged_books.append(merged)
 
     merged_books = sorted(merged_books, key=lambda item: item.get("last_open") or "", reverse=True)
