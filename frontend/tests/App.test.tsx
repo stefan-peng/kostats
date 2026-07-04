@@ -449,6 +449,41 @@ describe("App", () => {
     expect(screen.getByText("Kobo not mounted")).toBeInTheDocument();
   });
 
+  it("opens device assignment before uploading from compact views", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [] };
+      return emptyDashboard;
+    });
+
+    render(<App />);
+
+    await screen.findByText("No database yet");
+    const deviceBanner = within(screen.getByLabelText("Device import status"));
+    expect(deviceBanner.queryByText("Import as")).not.toBeInTheDocument();
+
+    await userEvent.click(deviceBanner.getByRole("button", { name: /Upload DB/i }));
+
+    const uploadDialog = await screen.findByRole("dialog");
+    expect(within(uploadDialog).getByText("Choose which device this KOReader database belongs to.")).toBeInTheDocument();
+    expect(within(uploadDialog).getByLabelText("Import device")).toHaveTextContent("Primary Kobo");
+    expect(within(uploadDialog).getByRole("button", { name: /Upload DB/i })).toBeEnabled();
+
+    await userEvent.click(within(uploadDialog).getByRole("button", { name: "Cancel" }));
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
+
+    expect(screen.getByLabelText("Import device")).toHaveTextContent("Auto-detected");
+  });
+
   it("follows the system dark mode preference", async () => {
     stubSystemMedia({ dark: true });
     mockFetch((url) => {

@@ -508,6 +508,7 @@ function DeviceBanner({
   onImport,
   onUploadClick,
   busy,
+  compact = false,
 }: {
   status: DeviceStatus | null;
   devices: DeviceSummary[];
@@ -520,6 +521,7 @@ function DeviceBanner({
   onImport: () => void;
   onUploadClick: () => void;
   busy: boolean;
+  compact?: boolean;
 }) {
   const mounted = status?.mounted ?? false;
   const found = status?.database_found ?? false;
@@ -532,6 +534,9 @@ function DeviceBanner({
         ? "Database not found"
         : "Kobo not mounted";
   const stateVariant = mounted && found && !blocked ? "default" : mounted || blocked ? "destructive" : "outline";
+  const snapshotLabel = activeSnapshot?.id === latestSnapshot?.id ? "Snapshot" : "Viewing";
+  const showLatest = Boolean(latestSnapshot && activeSnapshot?.id !== latestSnapshot.id);
+  const uploadAssignmentReady = isUploadAssignmentReady(importDevice, importDeviceLabel);
 
   return (
     <Card aria-label="Device import status">
@@ -542,8 +547,21 @@ function DeviceBanner({
           </div>
           <div className="min-w-0">
             <CardTitle>Kobo / KOReader</CardTitle>
-            <CardDescription className="flex items-center gap-2">
+            <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <Badge variant={stateVariant}>{stateLabel}</Badge>
+              {compact ? (
+                <>
+                  <span>{snapshotLabel}</span>
+                  <span>{activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
+                  {showLatest ? (
+                    <>
+                      <span>Latest</span>
+                      <span>{formatDateTime(latestSnapshot!.imported_at)}</span>
+                    </>
+                  ) : null}
+                  {activeSnapshot ? <span>{formatSnapshotSource(activeSnapshot)}</span> : null}
+                </>
+              ) : null}
             </CardDescription>
           </div>
         </div>
@@ -552,32 +570,32 @@ function DeviceBanner({
             {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
             {busy ? "Importing..." : "Import from Kobo"}
           </Button>
-          <Button variant="outline" disabled={busy} onClick={onUploadClick}>
+          <Button variant="outline" disabled={busy || (!compact && !uploadAssignmentReady)} onClick={onUploadClick}>
             <Upload data-icon="inline-start" />
             Upload DB
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="grid gap-4">
-        <div className="grid gap-2">
-          <div className="text-sm font-medium">Import as</div>
-          <DeviceAssignmentControl
-            devices={devices}
-            value={importDevice}
-            newLabel={importDeviceLabel}
-            onValueChange={onImportDeviceChange}
-            onNewLabelChange={onImportDeviceLabelChange}
-            includeAuto
-          />
-        </div>
-        <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-          <SnapshotMeta label={activeSnapshot?.id === latestSnapshot?.id ? "Snapshot" : "Viewing"} snapshot={activeSnapshot} />
-          {latestSnapshot && activeSnapshot?.id !== latestSnapshot.id ? (
-            <SnapshotMeta label="Latest" snapshot={latestSnapshot} />
-          ) : null}
-          <SnapshotMeta label="Source" snapshot={activeSnapshot} source />
-        </div>
-      </CardContent>
+      {!compact ? (
+        <CardContent className="grid gap-4">
+          <div className="grid gap-2">
+            <div className="text-sm font-medium">Import as</div>
+            <DeviceAssignmentControl
+              devices={devices}
+              value={importDevice}
+              newLabel={importDeviceLabel}
+              onValueChange={onImportDeviceChange}
+              onNewLabelChange={onImportDeviceLabelChange}
+              includeAuto
+            />
+          </div>
+          <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <SnapshotMeta label={snapshotLabel} snapshot={activeSnapshot} />
+            {showLatest ? <SnapshotMeta label="Latest" snapshot={latestSnapshot} /> : null}
+            <SnapshotMeta label="Source" snapshot={activeSnapshot} source />
+          </div>
+        </CardContent>
+      ) : null}
     </Card>
   );
 }
@@ -678,6 +696,12 @@ function assignmentFromSelection(value: string, label: string): DeviceAssignment
   if (value === "auto") return undefined;
   if (value === "new") return { new_device_label: label.trim() };
   return { device_id: value };
+}
+
+function isUploadAssignmentReady(value: string, label: string) {
+  if (value === "auto") return false;
+  if (value === "new") return label.trim() !== "";
+  return true;
 }
 
 function MetricCard({ label, value }: { label: string; value: string | number }) {
@@ -2038,12 +2062,16 @@ export default function App() {
   const [backups, setBackups] = useState<RecoveryBackup[]>([]);
   const [importDevice, setImportDevice] = useState("auto");
   const [importDeviceLabel, setImportDeviceLabel] = useState("");
+  const [uploadDevice, setUploadDevice] = useState("new");
+  const [uploadDeviceLabel, setUploadDeviceLabel] = useState("");
   const [activeView, setActiveView] = useState<View>(viewFromHash);
   const [readingDateFilter, setReadingDateFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoImportError, setAutoImportError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const pendingUploadAssignment = useRef<DeviceAssignment | undefined>(undefined);
   const selectedSnapshotId = useRef<string | null>(null);
 
   async function refresh() {
@@ -2136,13 +2164,32 @@ export default function App() {
     }
   }
 
+  function handleUploadRequest() {
+    if (activeView !== "settings") {
+      setUploadDevice(devices[0]?.id ?? "new");
+      setUploadDeviceLabel("");
+      setUploadDialogOpen(true);
+      return;
+    }
+    pendingUploadAssignment.current = assignmentFromSelection(importDevice, importDeviceLabel);
+    fileInput.current?.click();
+  }
+
+  function handleUploadDialogClick() {
+    pendingUploadAssignment.current = assignmentFromSelection(uploadDevice, uploadDeviceLabel);
+    fileInput.current?.click();
+  }
+
   async function handleUpload(file: File | undefined) {
-    if (!file) return;
+    if (!file) {
+      pendingUploadAssignment.current = undefined;
+      return;
+    }
     setBusy(true);
     setError(null);
     setAutoImportError(null);
     try {
-      const assignment = assignmentFromSelection(importDevice, importDeviceLabel);
+      const assignment = pendingUploadAssignment.current ?? assignmentFromSelection(importDevice, importDeviceLabel);
       if (!assignment) throw new Error("Choose a device or enter a device name before uploading.");
       if (assignment?.new_device_label === "") throw new Error("Enter a device name before uploading.");
       const result = await uploadDatabase(file, assignment);
@@ -2152,11 +2199,13 @@ export default function App() {
       setReadingDateFilter(null);
       selectView("dashboard");
       await refresh();
+      setUploadDialogOpen(false);
       toast.success("Database uploaded");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setBusy(false);
+      pendingUploadAssignment.current = undefined;
       if (fileInput.current) fileInput.current.value = "";
     }
   }
@@ -2236,6 +2285,8 @@ export default function App() {
 
   const latestSnapshot = snapshots[0] ?? dashboard.snapshot ?? null;
   const activeSnapshot = dashboard.snapshot ?? latestSnapshot;
+  const uploadAssignmentReady = isUploadAssignmentReady(importDevice, importDeviceLabel);
+  const dialogUploadAssignmentReady = isUploadAssignmentReady(uploadDevice, uploadDeviceLabel);
   const selectedReadingDate = useMemo<ReadingDateFilter | null>(() => {
     if (!readingDateFilter) return null;
     const day = dashboard.charts.calendar.days.find((item) => item.date === readingDateFilter);
@@ -2307,8 +2358,9 @@ export default function App() {
               onImportDeviceChange={setImportDevice}
               onImportDeviceLabelChange={setImportDeviceLabel}
               onImport={handleImport}
-              onUploadClick={() => fileInput.current?.click()}
+              onUploadClick={handleUploadRequest}
               busy={busy}
+              compact={activeView !== "settings"}
             />
             <input
               ref={fileInput}
@@ -2317,6 +2369,30 @@ export default function App() {
               hidden
               onChange={(event) => handleUpload(event.target.files?.[0])}
             />
+            <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Upload DB</DialogTitle>
+                  <DialogDescription>Choose which device this KOReader database belongs to.</DialogDescription>
+                </DialogHeader>
+                <DeviceAssignmentControl
+                  devices={devices}
+                  value={uploadDevice}
+                  newLabel={uploadDeviceLabel}
+                  onValueChange={setUploadDevice}
+                  onNewLabelChange={setUploadDeviceLabel}
+                />
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setUploadDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button disabled={busy || !dialogUploadAssignmentReady} onClick={handleUploadDialogClick}>
+                    <Upload data-icon="inline-start" />
+                    Upload DB
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             {error ? <ErrorAlert>{error}</ErrorAlert> : null}
             {autoImportError ? <ErrorAlert>{autoImportError}</ErrorAlert> : null}
