@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import backend.app.main as main_module
 from backend.app.backups import partial_md5
 from backend.app.devices import DeviceRegistry
 from backend.app.main import app
+from backend.app.sqlite_stats import build_dashboard
 from backend.app.storage import SnapshotStore
 
 
@@ -85,6 +88,111 @@ def test_upload_import_and_dashboard(monkeypatch, tmp_path: Path) -> None:
     dashboard = client.get("/api/dashboard").json()
     assert dashboard["books"][0]["title"] == "Kindred"
     assert dashboard["recent_books"][0]["title"] == "Kindred"
+
+
+def test_dashboard_endpoint_reuses_cached_snapshot_summary(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    source = tmp_path / "statistics.sqlite3"
+    create_api_fixture(source)
+    SnapshotStore(data_root).import_file(
+        source,
+        source_kind="upload",
+        source_path="statistics.sqlite3",
+        device={"id": "device-a", "label": "Desk Kobo", "model": None},
+    )
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    main_module.cached_dashboard.cache_clear()
+    calls = 0
+
+    def counted_build_dashboard(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return build_dashboard(*args, **kwargs)
+
+    monkeypatch.setattr(main_module, "build_dashboard", counted_build_dashboard)
+    client = TestClient(app)
+
+    first = client.get("/api/dashboard")
+    second = client.get("/api/dashboard")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert calls == 1
+
+
+def test_dashboard_cache_misses_when_snapshot_file_changes(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    source = tmp_path / "statistics.sqlite3"
+    create_api_fixture(source, title="Kindred")
+    snapshot = SnapshotStore(data_root).import_file(
+        source,
+        source_kind="upload",
+        source_path="statistics.sqlite3",
+        device={"id": "device-a", "label": "Desk Kobo", "model": None},
+    )
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    main_module.cached_dashboard.cache_clear()
+    client = TestClient(app)
+
+    first = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
+    Path(snapshot.path).unlink()
+    create_api_fixture(Path(snapshot.path), title="Parable")
+    second = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
+
+    assert first.status_code == 200
+    assert first.json()["books"][0]["title"] == "Kindred"
+    assert second.status_code == 200
+    assert second.json()["books"][0]["title"] == "Parable"
+
+
+def test_dashboard_cache_does_not_hide_deleted_snapshot_file(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    source = tmp_path / "statistics.sqlite3"
+    create_api_fixture(source)
+    snapshot = SnapshotStore(data_root).import_file(
+        source,
+        source_kind="upload",
+        source_path="statistics.sqlite3",
+        device={"id": "device-a", "label": "Desk Kobo", "model": None},
+    )
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    main_module.cached_dashboard.cache_clear()
+    client = TestClient(app)
+
+    first = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
+    Path(snapshot.path).unlink()
+    second = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
+
+    assert first.status_code == 200
+    assert first.json()["books"][0]["title"] == "Kindred"
+    assert second.status_code == 404
+    assert second.json()["detail"] == f"Snapshot file is missing: {snapshot.id}"
+
+
+def test_dashboard_cache_misses_when_current_local_date_changes(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    source = tmp_path / "statistics.sqlite3"
+    read_at = int(datetime(2026, 6, 3, 12, tzinfo=timezone.utc).timestamp())
+    create_api_fixture(source, start_time=read_at)
+    snapshot = SnapshotStore(data_root).import_file(
+        source,
+        source_kind="upload",
+        source_path="statistics.sqlite3",
+        device={"id": "device-a", "label": "Desk Kobo", "model": None},
+    )
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    main_module.cached_dashboard.cache_clear()
+    client = TestClient(app)
+
+    monkeypatch.setattr(main_module, "current_local_date", lambda: "2026-06-04")
+    first = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
+    monkeypatch.setattr(main_module, "current_local_date", lambda: "2026-06-05")
+    second = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
+
+    assert first.status_code == 200
+    assert first.json()["summary"]["current_streak"] == 1
+    assert second.status_code == 200
+    assert second.json()["summary"]["current_streak"] == 0
 
 
 def test_upload_requires_device_assignment(monkeypatch, tmp_path: Path) -> None:

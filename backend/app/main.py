@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -13,7 +15,7 @@ from .devices import DeviceRegistry, normalized_label
 from .device import auto_import_from_kobo, device_status, import_from_kobo
 from .errors import BackupError, ImportError, UnsupportedSchemaError
 from .sqlite_stats import SnapshotMeta, aggregate_dashboards, build_dashboard, empty_dashboard
-from .storage import SnapshotStore
+from .storage import SnapshotStore, hash_file
 
 
 app = FastAPI(title="kostats", version="0.1.0")
@@ -36,6 +38,37 @@ def backup_store() -> RecoveryBackupStore:
 
 def device_registry() -> DeviceRegistry:
     return DeviceRegistry(store().root)
+
+
+def snapshot_cache_fingerprint(snapshot: SnapshotMeta) -> tuple:
+    path = Path(snapshot.path)
+    stat = path.stat()
+    fingerprint: list[object] = [str(path), stat.st_mtime_ns, stat.st_size, hash_file(path)]
+    if snapshot.sidecar_path:
+        sidecar_path = Path(snapshot.sidecar_path)
+        sidecar_stat = sidecar_path.stat()
+        fingerprint.extend(
+            [
+                str(sidecar_path),
+                sidecar_stat.st_mtime_ns,
+                sidecar_stat.st_size,
+                hash_file(sidecar_path),
+            ]
+        )
+    return tuple(fingerprint)
+
+
+def current_local_date() -> str:
+    return datetime.now().astimezone().date().isoformat()
+
+
+@lru_cache(maxsize=64)
+def cached_dashboard(snapshot: SnapshotMeta, fingerprint: tuple, today: str) -> dict:
+    return build_dashboard(Path(snapshot.path), snapshot, today=datetime.strptime(today, "%Y-%m-%d").date())
+
+
+def dashboard_for_snapshot(snapshot: SnapshotMeta) -> dict:
+    return cached_dashboard(snapshot, snapshot_cache_fingerprint(snapshot), current_local_date())
 
 
 def known_device_rows() -> list[dict]:
@@ -153,6 +186,15 @@ def has_manual_device_label(device: dict) -> bool:
 def effective_device_groups(snapshot_rows: list[dict], backup_rows: list[dict]) -> tuple[list[dict], dict[str, dict]]:
     devices = raw_device_summaries(snapshot_rows, backup_rows)
     grouped: dict[str, dict] = {}
+    snapshots_by_device: dict[str, list[dict]] = {}
+    backups_by_device: dict[str, list[dict]] = {}
+    for row in snapshot_rows:
+        if device_id := row.get("device_id"):
+            snapshots_by_device.setdefault(device_id, []).append(row)
+    for row in backup_rows:
+        if device_id := row.get("device_id"):
+            backups_by_device.setdefault(device_id, []).append(row)
+
     for device in sorted(devices.values(), key=lambda item: (item.get("label") or item["id"], item["id"])):
         label = display_device_label(device.get("label") or device["id"]) or device["id"]
         key = f"manual:{normalized_label(label)}" if has_manual_device_label(device) else f"device:{device['id']}"
@@ -178,8 +220,8 @@ def effective_device_groups(snapshot_rows: list[dict], backup_rows: list[dict]) 
     group_by_raw_id: dict[str, dict] = {}
     for group in grouped.values():
         raw_ids = set(group["device_ids"])
-        device_snapshots = [row for row in snapshot_rows if row.get("device_id") in raw_ids]
-        device_backups = [row for row in backup_rows if row.get("device_id") in raw_ids]
+        device_snapshots = [row for raw_id in raw_ids for row in snapshots_by_device.get(raw_id, [])]
+        device_backups = [row for raw_id in raw_ids for row in backups_by_device.get(raw_id, [])]
         group["snapshot_count"] = len(device_snapshots)
         group["backup_count"] = len(device_backups)
         group["last_snapshot_at"] = max((row["imported_at"] for row in device_snapshots), default=None)
@@ -264,6 +306,7 @@ def patch_device(device_id: str, request: DeviceUpdateRequest) -> dict:
                 renamed.append(device)
     if not renamed:
         raise HTTPException(status_code=404, detail=f"Device not found: {device_id}")
+    cached_dashboard.cache_clear()
     return {"device": renamed[0]}
 
 
@@ -355,6 +398,7 @@ def patch_snapshot_device(snapshot_id: str, request: DeviceAssignmentRequest) ->
     snapshot = store().assign_device(snapshot_id, device)
     if snapshot is None:
         raise HTTPException(status_code=404, detail=f"Snapshot not found: {snapshot_id}")
+    cached_dashboard.cache_clear()
     return {"snapshot": snapshot.__dict__}
 
 
@@ -423,7 +467,9 @@ def get_dashboard(snapshot_id: str = "latest", device_id: str = "all") -> dict:
             ]
             if len(snapshots) > 1:
                 try:
-                    dashboards = [build_dashboard(Path(item.path), item) for item in snapshots]
+                    dashboards = [dashboard_for_snapshot(item) for item in snapshots]
+                except FileNotFoundError as exc:
+                    raise HTTPException(status_code=404, detail="Snapshot file is missing") from exc
                 except UnsupportedSchemaError as exc:
                     raise HTTPException(status_code=422, detail=str(exc)) from exc
                 return aggregate_dashboards(dashboards, snapshots=snapshots)
@@ -433,7 +479,9 @@ def get_dashboard(snapshot_id: str = "latest", device_id: str = "all") -> dict:
             backup_rows = backup_store().list_backups()
             snapshots = latest_effective_snapshots(snapshot_rows, backup_rows)
             try:
-                dashboards = [build_dashboard(Path(snapshot.path), snapshot) for snapshot in snapshots]
+                dashboards = [dashboard_for_snapshot(snapshot) for snapshot in snapshots]
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail="Snapshot file is missing") from exc
             except UnsupportedSchemaError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             if not dashboards:
@@ -444,7 +492,7 @@ def get_dashboard(snapshot_id: str = "latest", device_id: str = "all") -> dict:
     if snapshot is None:
         return empty_dashboard()
     try:
-        return build_dashboard(Path(snapshot.path), snapshot)
+        return dashboard_for_snapshot(snapshot)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Snapshot file is missing: {snapshot.id}") from exc
     except UnsupportedSchemaError as exc:
