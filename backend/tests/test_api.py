@@ -508,12 +508,14 @@ def test_devices_filter_merges_manual_label_and_keeps_tablet_separate(monkeypatc
     ]
 
 
-def test_auto_detected_same_model_devices_do_not_merge_by_label(monkeypatch, tmp_path: Path) -> None:
+def test_auto_detected_same_label_devices_merge_to_latest_snapshot(monkeypatch, tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     first_source = tmp_path / "first-kobo.sqlite3"
     create_api_fixture(first_source, title="Kindred", duration=1200)
     second_source = tmp_path / "second-kobo.sqlite3"
     create_api_fixture(second_source, title="Parable", duration=1800)
+    tablet_source = tmp_path / "tablet.sqlite3"
+    create_api_fixture(tablet_source, title="Tablet Book", duration=600)
     SnapshotStore(data_root).import_file(
         first_source,
         source_kind="kobo",
@@ -526,13 +528,55 @@ def test_auto_detected_same_model_devices_do_not_merge_by_label(monkeypatch, tmp
         source_path="second-kobo.sqlite3",
         device={"id": "kobo-b", "label": "Kobo Libra Color", "model": "Kobo Libra Color"},
     )
+    SnapshotStore(data_root).import_file(
+        tablet_source,
+        source_kind="upload",
+        source_path="tablet.sqlite3",
+        device={"id": "tablet", "label": "Tablet", "model": None},
+    )
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    client = TestClient(app)
+
+    devices = client.get("/api/devices").json()["devices"]
+    assert [(device["label"], device["snapshot_count"]) for device in devices] == [
+        ("Kobo Libra Color", 2),
+        ("Tablet", 1),
+    ]
+    dashboard = client.get("/api/dashboard").json()
+    assert dashboard["summary"]["total_time_label"] == "40m"
+    assert {book["title"] for book in dashboard["books"]} == {"Parable", "Tablet Book"}
+    assert [device["label"] for device in dashboard["charts"]["devices"]] == ["Kobo Libra Color", "Tablet"]
+    kobo_key = next(device["id"] for device in dashboard["charts"]["devices"] if device["label"] == "Kobo Libra Color")
+    tablet_key = next(device["id"] for device in dashboard["charts"]["devices"] if device["label"] == "Tablet")
+    assert dashboard["charts"]["daily_by_device"][0][kobo_key] == 30.0
+    assert dashboard["charts"]["daily_by_device"][0][tablet_key] == 10.0
+
+
+def test_generic_auto_detected_labels_do_not_merge(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    first_source = tmp_path / "first-kobo.sqlite3"
+    create_api_fixture(first_source, title="Kindred", duration=1200)
+    second_source = tmp_path / "second-kobo.sqlite3"
+    create_api_fixture(second_source, title="Parable", duration=1800)
+    SnapshotStore(data_root).import_file(
+        first_source,
+        source_kind="kobo",
+        source_path="first-kobo.sqlite3",
+        device={"id": "kobo-a", "label": "Kobo device", "model": None},
+    )
+    SnapshotStore(data_root).import_file(
+        second_source,
+        source_kind="kobo",
+        source_path="second-kobo.sqlite3",
+        device={"id": "kobo-b", "label": "Kobo device", "model": None},
+    )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     client = TestClient(app)
 
     devices = client.get("/api/devices").json()["devices"]
     assert [(device["id"], device["label"], device["snapshot_count"]) for device in devices] == [
-        ("kobo-a", "Kobo Libra Color", 1),
-        ("kobo-b", "Kobo Libra Color", 1),
+        ("kobo-a", "Kobo device", 1),
+        ("kobo-b", "Kobo device", 1),
     ]
     dashboard = client.get("/api/dashboard").json()
     assert dashboard["summary"]["total_time_label"] == "50m"
@@ -583,6 +627,8 @@ def test_dashboard_charts_merge_legacy_kobo_rows_with_manual_label(monkeypatch, 
     assert [device["label"] for device in dashboard["charts"]["devices"]] == ["Kobo Libra Color", "Tablet"]
     kobo_key = next(device["id"] for device in dashboard["charts"]["devices"] if device["label"] == "Kobo Libra Color")
     tablet_key = next(device["id"] for device in dashboard["charts"]["devices"] if device["label"] == "Tablet")
+    assert dashboard["charts"]["daily_by_device"][0][kobo_key] == 30.0
+    assert dashboard["charts"]["daily_by_device"][0][tablet_key] == 10.0
     assert dashboard["charts"]["monthly_by_device"][0][kobo_key] == 0.5
     assert dashboard["charts"]["monthly_by_device"][0][tablet_key] == 0.17
 

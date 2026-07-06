@@ -1,4 +1,5 @@
 data/
+.pi/
 .playwright-mcp/
 .venv/
 __pycache__/

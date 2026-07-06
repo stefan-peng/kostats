@@ -343,7 +343,10 @@ function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
       });
     }
     const result = handler(url, init);
-    if (url.startsWith("/api/backups") && result === undefined) {
+    if (
+      url.startsWith("/api/backups?")
+      && (result === undefined || !(typeof result === "object" && result !== null && "backups" in result))
+    ) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({ backups: [] }),
@@ -807,9 +810,11 @@ describe("App", () => {
       candidates: [],
       searched_mount_paths: ["C:\\", "E:\\"],
     };
+    const autoImportUrls: string[] = [];
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) return mountedStatus;
       if (url.startsWith("/api/import/kobo/auto")) {
+        autoImportUrls.push(url);
         return {
           imported: true,
           reason: "changed",
@@ -828,6 +833,7 @@ describe("App", () => {
     expect(await deviceBanner.findByText("Ready to import")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: /Snapshots/i }));
     expect(screen.getAllByText(/E:\\.adds\\koreader\\settings\\statistics.sqlite3/).length).toBeGreaterThan(0);
+    expect(autoImportUrls).toContain("/api/import/kobo/auto");
   });
 
   it("shows an automatic Kobo import during startup sync", async () => {
@@ -839,9 +845,11 @@ describe("App", () => {
       permission_error: null,
       candidates: [],
     };
+    const autoImportUrls: string[] = [];
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) return mountedStatus;
       if (url.startsWith("/api/import/kobo/auto")) {
+        autoImportUrls.push(url);
         return {
           imported: true,
           reason: "changed",
@@ -859,6 +867,12 @@ describe("App", () => {
     const deviceBanner = within(screen.getByLabelText("Device import status"));
     expect(await deviceBanner.findByText("Ready to import")).toBeInTheDocument();
     expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
+    expect(autoImportUrls).toContain("/api/import/kobo/auto");
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+    });
+    await waitFor(() => expect(autoImportUrls.length).toBeGreaterThanOrEqual(2));
   });
 
   it("continues showing local snapshot data when startup auto-import fails", async () => {

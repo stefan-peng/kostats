@@ -2080,8 +2080,10 @@ export default function App() {
     if (deviceStatus.mounted && deviceStatus.database_found && !deviceStatus.permission_error) {
       try {
         const autoResult = await autoImportFromKobo();
+        if (!autoResult.device) throw new Error("Auto-import response did not include device status");
         deviceStatus = autoResult.device;
       } catch (err) {
+        // Background Kobo sync is a UI boundary: show the import failure while keeping local snapshots visible.
         nextAutoImportError = `Auto-import failed: ${err instanceof Error ? err.message : "Could not import from Kobo"}`;
       }
     }
@@ -2090,15 +2092,13 @@ export default function App() {
       getDevices(),
       getDashboard(dashboardSnapshotId, deviceFilter),
       getSnapshots(deviceFilter),
-      getBackups(deviceFilter).catch(() => null),
+      getBackups(deviceFilter),
     ]);
     setDevice(deviceStatus);
     setDevices(deviceData.devices);
     setDashboard(dashboardData);
     setSnapshots(snapshotData.snapshots);
-    if (backupData && Array.isArray(backupData.backups)) {
-      setBackups(backupData.backups);
-    }
+    setBackups(backupData.backups);
     setAutoImportError(nextAutoImportError);
   }
 
@@ -2124,7 +2124,7 @@ export default function App() {
   useEffect(() => {
     refresh().catch((err: Error) => setError(err.message));
     const id = window.setInterval(() => {
-      refresh().catch(() => undefined);
+      refresh().catch((err: Error) => setError(err.message));
     }, 15000);
     return () => window.clearInterval(id);
   }, [deviceFilter]);

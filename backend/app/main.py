@@ -165,22 +165,18 @@ def device_label_display_score(label: str) -> tuple[int, int]:
     return (sum(1 for char in label if char.isupper()), -len(label))
 
 
-def default_device_label(device: dict) -> str:
-    device_id = device.get("id")
-    if device_id == "primary-kobo":
-        return "Primary Kobo"
-    if device_id == "uploaded-databases":
-        return "Uploaded databases"
-    return display_device_label(device.get("model") or "Kobo device")
+GENERIC_DEVICE_LABEL_KEYS = {
+    normalized_label("Kobo device"),
+    normalized_label("Primary Kobo"),
+    normalized_label("Uploaded databases"),
+}
 
 
-def has_manual_device_label(device: dict) -> bool:
-    label_source = device.get("label_source")
-    if label_source == "manual":
-        return True
-    if label_source == "auto":
-        return False
-    return normalized_label(device.get("label")) != normalized_label(default_device_label(device))
+def effective_device_group_key(device: dict, label: str) -> str:
+    label_key = normalized_label(label)
+    if label_key and label_key not in GENERIC_DEVICE_LABEL_KEYS and label_key != normalized_label(device["id"]):
+        return f"label:{label_key}"
+    return f"device:{device['id']}"
 
 
 def effective_device_groups(snapshot_rows: list[dict], backup_rows: list[dict]) -> tuple[list[dict], dict[str, dict]]:
@@ -197,7 +193,7 @@ def effective_device_groups(snapshot_rows: list[dict], backup_rows: list[dict]) 
 
     for device in sorted(devices.values(), key=lambda item: (item.get("label") or item["id"], item["id"])):
         label = display_device_label(device.get("label") or device["id"]) or device["id"]
-        key = f"manual:{normalized_label(label)}" if has_manual_device_label(device) else f"device:{device['id']}"
+        key = effective_device_group_key(device, label)
         group = grouped.setdefault(
             key,
             {
