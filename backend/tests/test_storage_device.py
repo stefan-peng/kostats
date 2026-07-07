@@ -297,6 +297,102 @@ def test_auto_import_from_kobo_imports_only_when_database_changes(tmp_path: Path
     assert len(store.list_snapshots()) == 2
 
 
+def test_auto_import_from_kobo_compares_latest_same_device_snapshot(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    add_reading_row(db_path, book_id=1, title="Dune", duration=1200)
+    store = SnapshotStore(tmp_path / "data")
+    register_auto_import_device(store, volume)
+    first = auto_import_from_kobo(store, volume)
+
+    upload = tmp_path / "tablet.sqlite3"
+    create_db(upload)
+    add_reading_row(upload, book_id=2, title="Tablet", duration=600)
+    store.import_file(
+        upload,
+        source_kind="upload",
+        source_path="tablet.sqlite3",
+        device={"id": "tablet", "label": "Tablet", "model": None},
+    )
+    other_volume = tmp_path / "TravelKOBO"
+    other_db = other_volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(other_db)
+    add_reading_row(other_db, book_id=3, title="Travel", duration=300)
+    register_auto_import_device(store, other_volume)
+    other = auto_import_from_kobo(store, other_volume)
+
+    second = auto_import_from_kobo(store, volume)
+
+    assert first["imported"] is True
+    assert other["imported"] is True
+    assert other["snapshot"]["device_id"] != first["snapshot"]["device_id"]
+    assert second["imported"] is False
+    assert second["reason"] == "unchanged"
+    assert second["snapshot"]["id"] == first["snapshot"]["id"]
+    assert len(store.list_snapshots()) == 3
+
+
+def test_auto_import_from_kobo_continues_legacy_kobo_history(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    add_reading_row(db_path, book_id=1, title="Dune", duration=1200)
+    store = SnapshotStore(tmp_path / "data")
+    store.import_file(db_path, source_kind="kobo-auto", source_path=str(db_path))
+    add_reading_row(db_path, book_id=2, title="Kindred", duration=900)
+
+    result = auto_import_from_kobo(store, volume)
+
+    assert result["imported"] is True
+    assert result["reason"] == "changed"
+    assert result["snapshot"]["device_id"] == "primary-kobo"
+    assert len(store.list_snapshots()) == 2
+
+
+def test_auto_import_from_kobo_continues_single_assigned_kobo_history(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    add_reading_row(db_path, book_id=1, title="Dune", duration=1200)
+    store = SnapshotStore(tmp_path / "data")
+    assigned = DeviceRegistry(store.root).create_manual("Travel Kobo", source="kobo")
+    assert assigned is not None
+    import_from_kobo(store, volume, device=assigned)
+    add_reading_row(db_path, book_id=2, title="Kindred", duration=900)
+
+    result = auto_import_from_kobo(store, volume)
+
+    assert result["imported"] is True
+    assert result["reason"] == "changed"
+    assert result["snapshot"]["device_id"] == assigned["id"]
+    assert len(store.list_snapshots()) == 2
+
+
+def test_auto_import_from_kobo_prefers_registered_detected_device_over_single_history(tmp_path: Path) -> None:
+    history_volume = tmp_path / "HistoryKOBO"
+    history_db = history_volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(history_db)
+    add_reading_row(history_db, book_id=1, title="Dune", duration=1200)
+    current_volume = tmp_path / "CurrentKOBO"
+    current_db = current_volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(current_db)
+    add_reading_row(current_db, book_id=2, title="Kindred", duration=900)
+    store = SnapshotStore(tmp_path / "data")
+    registry = DeviceRegistry(store.root)
+    assigned = registry.create_manual("Travel Kobo", source="kobo")
+    assert assigned is not None
+    import_from_kobo(store, history_volume, device=assigned)
+    detected = registry.ensure_for_volume(current_volume)
+
+    result = auto_import_from_kobo(store, current_volume)
+
+    assert result["imported"] is True
+    assert result["snapshot"]["device_id"] == detected["id"]
+    assert result["snapshot"]["device_id"] != assigned["id"]
+    assert len(store.list_snapshots()) == 2
+
+
 def test_auto_import_from_kobo_detects_sidecar_only_changes(tmp_path: Path) -> None:
     volume = tmp_path / "KOBOeReader"
     db_path = volume / ".adds/koreader/settings/statistics.sqlite3"

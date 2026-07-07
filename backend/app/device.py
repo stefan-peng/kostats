@@ -13,7 +13,7 @@ from .config import (
     kobo_volume_is_configured,
     kobo_volume_is_default_mount_path,
 )
-from .devices import DeviceRegistry, detect_device_identity
+from .devices import LEGACY_DEVICE_ID, DeviceRegistry, detect_device_identity
 from .errors import ImportError
 from .storage import SnapshotStore, combined_content_hash, copy_sqlite_database, hash_file
 from .sidecars import build_sidecar_snapshot, serialize_sidecar_snapshot, sidecar_snapshot_hash
@@ -27,6 +27,7 @@ KOBO_DB_CANDIDATES = [
 ]
 DEVICE_LOCK = threading.RLock()
 AUTO_IMPORT_LOCK = DEVICE_LOCK
+KOBO_SNAPSHOT_SOURCES = {"kobo", "kobo-auto"}
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,66 @@ def import_from_kobo(store: SnapshotStore, volume: Path | None = None, device: d
     return {"snapshot": meta.__dict__, "device": status}
 
 
+def latest_auto_import_snapshot(store: SnapshotStore, device_id: str) -> Any | None:
+    for snapshot in store.list_snapshots():
+        if snapshot.get("source") in KOBO_SNAPSHOT_SOURCES and snapshot.get("device_id") == device_id:
+            return store.resolve(snapshot["id"])
+    return None
+
+
+def device_from_snapshot_history(
+    registry: DeviceRegistry,
+    detected: dict[str, str | None],
+    snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    device_id = snapshot.get("device_id")
+    if not device_id:
+        return None
+    if device := registry.resolve(str(device_id)):
+        return device
+    if device_id == LEGACY_DEVICE_ID:
+        return registry.legacy_device_for_source("kobo")
+    return registry.upsert(
+        device_id=str(device_id),
+        label=snapshot.get("device_label") or str(detected.get("label") or "Kobo device"),
+        model=snapshot.get("device_model") or detected.get("model"),
+        koreader_version=detected.get("koreader_version"),
+        source="kobo",
+    )
+
+
+def resolve_auto_import_device(
+    store: SnapshotStore,
+    registry: DeviceRegistry,
+    detected: dict[str, str | None],
+) -> dict[str, Any] | None:
+    detected_id = str(detected["id"])
+    detected_device = registry.resolve(detected_id)
+    snapshots = [snapshot for snapshot in store.list_snapshots() if snapshot.get("source") in KOBO_SNAPSHOT_SOURCES]
+    detected_snapshot = next(
+        (
+            snapshot
+            for snapshot in snapshots
+            if snapshot.get("device_id") == detected_id
+        ),
+        None,
+    )
+    if detected_snapshot is not None:
+        return device_from_snapshot_history(registry, detected, detected_snapshot)
+
+    if detected_device is not None:
+        return detected_device
+
+    history_by_device: dict[str, dict[str, Any]] = {}
+    for snapshot in snapshots:
+        if device_id := snapshot.get("device_id"):
+            history_by_device.setdefault(str(device_id), snapshot)
+    if len(history_by_device) == 1:
+        return device_from_snapshot_history(registry, detected, next(iter(history_by_device.values())))
+
+    return detected_device
+
+
 def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> dict[str, Any]:
     status = device_status(volume)
     latest = store.latest()
@@ -145,7 +206,7 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
     with AUTO_IMPORT_LOCK:
         registry = DeviceRegistry(store.root)
         detected = detect_device_identity(Path(status["mount_path"]))
-        device = registry.resolve(str(detected["id"]))
+        device = resolve_auto_import_device(store, registry, detected)
         if device is None:
             result["reason"] = "device_unassigned"
             return result
@@ -161,7 +222,7 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
             prepared_sidecars.write_bytes(sidecar_payload)
             prepared_sidecar_hash = sidecar_snapshot_hash(sidecar_payload)
             prepared_hash = combined_content_hash(hash_file(prepared), prepared_sidecar_hash)
-            latest = store.latest()
+            latest = latest_auto_import_snapshot(store, str(device["id"]))
             latest_hash = store.snapshot_content_hash(latest)
             if latest_hash == prepared_hash:
                 result["reason"] = "unchanged"
