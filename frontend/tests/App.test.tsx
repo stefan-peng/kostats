@@ -1395,6 +1395,132 @@ describe("App", () => {
     expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
   });
 
+  it("refreshes merged dashboard data immediately after saving a device label", async () => {
+    const initialDashboard = {
+      ...populatedDashboard,
+      charts: {
+        ...populatedDashboard.charts,
+        devices: [
+          { id: "primary-kobo", label: "Primary Kobo" },
+          { id: "travel-kobo", label: "Travel Kobo" },
+        ],
+        daily_by_device: [
+          {
+            date: "2026-05-30",
+            label: "May 30",
+            "primary-kobo": 90,
+            "travel-kobo": 30,
+          },
+        ],
+        monthly_by_device: [
+          {
+            month: "2026-05",
+            label: "May 26",
+            "primary-kobo": 1.5,
+            "travel-kobo": 0.5,
+          },
+        ],
+      },
+    };
+    const mergedDashboard = {
+      ...populatedDashboard,
+      summary: {
+        ...populatedDashboard.summary,
+        total_time_seconds: 7200,
+        total_time_label: "2h 00m",
+      },
+      charts: {
+        ...populatedDashboard.charts,
+        devices: [{ id: "primary-kobo", label: "Primary Kobo" }],
+        daily_by_device: [
+          {
+            date: "2026-05-30",
+            label: "May 30",
+            "primary-kobo": 120,
+          },
+        ],
+        monthly_by_device: [
+          {
+            month: "2026-05",
+            label: "May 26",
+            "primary-kobo": 2,
+          },
+        ],
+      },
+    };
+    const dashboardRequests: string[] = [];
+    let labelSaved = false;
+
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/device/status")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            mount_path: "/Volumes/KOBOeReader",
+            mounted: false,
+            database_found: false,
+            selected_path: null,
+            permission_error: null,
+            candidates: [],
+          }),
+        });
+      }
+      if (url.startsWith("/api/devices/travel-kobo") && init?.method === "PATCH") {
+        labelSaved = true;
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ device: { ...travelDeviceSummary, label: "Primary Kobo" } }),
+        });
+      }
+      if (url.startsWith("/api/devices")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            devices: labelSaved
+              ? [{ ...deviceSummary, snapshot_count: 2 }]
+              : [deviceSummary, travelDeviceSummary],
+          }),
+        });
+      }
+      if (url.startsWith("/api/snapshots")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ snapshots: [populatedDashboard.snapshot, olderSnapshot] }),
+        });
+      }
+      if (url.startsWith("/api/backups?")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ backups: [] }),
+        });
+      }
+      if (url.startsWith("/api/dashboard")) {
+        dashboardRequests.push(url);
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve(labelSaved ? mergedDashboard : initialDashboard),
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    render(<App />);
+
+    expect((await screen.findAllByText("1h 30m")).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
+    await userEvent.clear(screen.getByLabelText("Label for Travel Kobo"));
+    await userEvent.type(screen.getByLabelText("Label for Travel Kobo"), "Primary Kobo");
+    const saveButton = screen.getAllByRole("button", { name: "Save label" }).find((button) => !button.hasAttribute("disabled"));
+    expect(saveButton).toBeDefined();
+    await userEvent.click(saveButton!);
+
+    await waitFor(() => expect(screen.queryByLabelText("Label for Travel Kobo")).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole("link", { name: /Dashboard/i }));
+    expect((await screen.findAllByText("2h 00m")).length).toBeGreaterThan(0);
+    expect(dashboardRequests).toContain("/api/dashboard?snapshot_id=latest&device_id=all");
+  });
+
   it("creates, previews, confirms, and reports a recovery restore", async () => {
     const mountedStatus = {
       mount_path: "/Volumes/KOBOeReader",

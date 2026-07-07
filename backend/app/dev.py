@@ -15,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = ROOT / "frontend"
 
 
+def require_command(name: str) -> str | None:
+    return shutil.which(name)
+
+
 class ManagedProcess:
     def __init__(self, name: str, command: list[str]) -> None:
         self.name = name
@@ -79,8 +83,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if shutil.which("npm") is None:
+    npm = require_command("npm")
+    if npm is None:
         print("npm is required to run the frontend dev server.", file=sys.stderr)
+        return 1
+
+    uv = require_command("uv")
+    if uv is None:
+        print("uv is required to run the backend dev server.", file=sys.stderr)
         return 1
 
     if not (FRONTEND / "node_modules").exists():
@@ -92,7 +102,7 @@ def main() -> int:
         ManagedProcess(
             "backend",
             [
-                "uv",
+                uv,
                 "run",
                 "uvicorn",
                 "backend.app.main:app",
@@ -103,7 +113,7 @@ def main() -> int:
                 "8000",
             ],
         ),
-        ManagedProcess("frontend", ["npm", "run", "dev", "--prefix", "frontend"]),
+        ManagedProcess("frontend", [npm, "run", "dev", "--prefix", "frontend"]),
     ]
     stopping = False
 

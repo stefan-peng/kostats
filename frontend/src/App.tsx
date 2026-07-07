@@ -2257,10 +2257,24 @@ export default function App() {
   }
 
   async function handleRenameDevice(deviceId: string, label: string) {
-    await renameDevice(deviceId, label.trim());
-    const deviceData = await getDevices();
-    setDevices(deviceData.devices);
-    toast.success("Device label saved");
+    setError(null);
+    try {
+      await renameDevice(deviceId, label.trim());
+      const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
+      const [deviceData, dashboardData, snapshotData, backupData] = await Promise.all([
+        getDevices(),
+        getDashboard(dashboardSnapshotId, deviceFilter),
+        getSnapshots(deviceFilter),
+        getBackups(deviceFilter),
+      ]);
+      setDevices(deviceData.devices);
+      setDashboard(dashboardData);
+      setSnapshots(snapshotData.snapshots);
+      setBackups(backupData.backups);
+      toast.success("Device label saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save device label");
+    }
   }
 
   async function handleReassignSnapshot(snapshotId: string, targetDeviceId: string) {
