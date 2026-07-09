@@ -878,6 +878,7 @@ describe("App", () => {
       candidates: [],
     };
     const autoImportUrls: string[] = [];
+    const dashboardUrls: string[] = [];
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) return mountedStatus;
       if (url.startsWith("/api/import/kobo/auto")) {
@@ -891,6 +892,7 @@ describe("App", () => {
         };
       }
       if (url.startsWith("/api/snapshots")) return { snapshots: [autoSnapshot] };
+      if (url.startsWith("/api/dashboard")) dashboardUrls.push(url);
       return autoDashboard;
     });
 
@@ -900,11 +902,13 @@ describe("App", () => {
     expect(await deviceBanner.findByText("Ready to import")).toBeInTheDocument();
     expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
     expect(autoImportUrls).toContain("/api/import/kobo/auto");
+    expect(dashboardUrls).toHaveLength(1);
 
     await act(async () => {
       vi.advanceTimersByTime(15000);
     });
-    await waitFor(() => expect(autoImportUrls.length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(autoImportUrls).toHaveLength(1));
+    expect(dashboardUrls).toHaveLength(1);
   });
 
   it("continues showing local snapshot data when startup auto-import fails", async () => {
@@ -1309,7 +1313,7 @@ describe("App", () => {
     expect(screen.queryByText("No reading days yet")).not.toBeInTheDocument();
   });
 
-  it("opens an overflowing calendar at the current week without resetting after polling", async () => {
+  it("opens an overflowing calendar at the current week without a dashboard refresh during status polling", async () => {
     vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
       return this.classList.contains("calendar-scroll") ? 828 : 0;
     });
@@ -1344,13 +1348,14 @@ describe("App", () => {
 
     const heatmap = screen.getByLabelText("Scrollable reading calendar heatmap");
     expect(heatmap).toHaveProperty("scrollLeft", 488);
+    const initialDashboardRequests = dashboardRequests;
 
     heatmap.scrollLeft = 120;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15000);
     });
 
-    expect(dashboardRequests).toBeGreaterThan(1);
+    expect(dashboardRequests).toBe(initialDashboardRequests);
     expect(heatmap).toHaveProperty("scrollLeft", 120);
   });
 

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
@@ -184,6 +184,7 @@ const tableViewportSideInset = 16;
 const tableViewportBottomInset = 37;
 const tableMinimumHeight = 240;
 const recentBooksTableMinimumHeight = 420;
+const deviceStatusPollMs = 15_000;
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const emptyDashboard: Dashboard = {
@@ -547,7 +548,7 @@ function BookActivityChart({ activity }: { activity: BookStats["recent_activity"
             />
           }
         />
-        <Bar dataKey="minutes" barSize={16} fill="var(--color-minutes)" radius={4} />
+        <Bar dataKey="minutes" barSize={16} fill="var(--color-minutes)" isAnimationActive={false} radius={4} />
       </BarChart>
     </ChartContainer>
   );
@@ -1017,6 +1018,7 @@ function ReadingBarChart({
                 dataKey={valueKey}
                 barSize={valueKey === "hours" ? 28 : 10}
                 fill={`var(--color-${valueKey})`}
+                isAnimationActive={false}
                 radius={[4, 4, 0, 0]}
               />
             </BarChart>
@@ -1084,6 +1086,7 @@ function DeviceStackedBarChart({
                   dataKey={device.id}
                   stackId="device"
                   fill={deviceChartColors[index % deviceChartColors.length]}
+                  isAnimationActive={false}
                   radius={index === devices.length - 1 ? [4, 4, 0, 0] : 0}
                 />
               ))}
@@ -1160,7 +1163,7 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
                   />
                 }
               />
-              <Bar dataKey="hours" barSize={18} fill="var(--color-hours)" radius={4} />
+              <Bar dataKey="hours" barSize={18} fill="var(--color-hours)" isAnimationActive={false} radius={4} />
             </BarChart>
           </ChartContainer>
         )}
@@ -1785,6 +1788,8 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
     </>
   );
 }
+
+const MemoizedDashboardView = memo(DashboardView);
 
 function SnapshotsView({
   snapshots,
@@ -2522,6 +2527,25 @@ export default function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const pendingUploadAssignment = useRef<DeviceAssignment | undefined>(undefined);
   const selectedSnapshotId = useRef<string | null>(null);
+  const deviceStatusKey = useRef<string | null>(null);
+  const deviceStatusRefreshInFlight = useRef(false);
+
+  function publishDeviceStatus(nextDeviceStatus: DeviceStatus) {
+    const nextKey = JSON.stringify(nextDeviceStatus);
+    if (nextKey === deviceStatusKey.current) return;
+    deviceStatusKey.current = nextKey;
+    setDevice(nextDeviceStatus);
+  }
+
+  async function refreshDeviceStatus() {
+    if (deviceStatusRefreshInFlight.current) return;
+    deviceStatusRefreshInFlight.current = true;
+    try {
+      publishDeviceStatus(await getDeviceStatus());
+    } finally {
+      deviceStatusRefreshInFlight.current = false;
+    }
+  }
 
   async function refresh() {
     let deviceStatus = await getDeviceStatus();
@@ -2543,7 +2567,7 @@ export default function App() {
       getSnapshots(deviceFilter),
       getBackups(deviceFilter),
     ]);
-    setDevice(deviceStatus);
+    publishDeviceStatus(deviceStatus);
     setDevices(deviceData.devices);
     setDashboard(dashboardData);
     setSnapshots(snapshotData.snapshots);
@@ -2573,8 +2597,8 @@ export default function App() {
   useEffect(() => {
     refresh().catch((err: Error) => setError(err.message));
     const id = window.setInterval(() => {
-      refresh().catch((err: Error) => setError(err.message));
-    }, 15000);
+      refreshDeviceStatus().catch((err: Error) => setError(err.message));
+    }, deviceStatusPollMs);
     return () => window.clearInterval(id);
   }, [deviceFilter]);
 
@@ -2865,7 +2889,7 @@ export default function App() {
               </ErrorAlert>
             ) : null}
 
-            {activeView === "dashboard" ? <DashboardView dashboard={dashboard} /> : null}
+            {activeView === "dashboard" ? <MemoizedDashboardView dashboard={dashboard} /> : null}
             {activeView === "snapshots" ? (
               <SnapshotsView
                 snapshots={snapshots}
