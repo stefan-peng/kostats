@@ -120,6 +120,25 @@ const populatedDashboard = {
     top_books: [{ id: "1", title: "Piranesi", hours: 1.5 }],
     calendar: fullCalendar,
   },
+  insights: {
+    sessions: {
+      available: true,
+      total: 2,
+      average_active_seconds: 2700,
+      longest_active_seconds: 3600,
+      recent: [
+        {
+          started_at: "2026-05-31T10:00:00Z",
+          ended_at: "2026-05-31T11:00:00Z",
+          active_seconds: 2700,
+          elapsed_seconds: 3600,
+          event_count: 8,
+          book_ids: ["1"],
+          book_count: 1,
+        },
+      ],
+    },
+  },
   books: [
     {
       id: "1",
@@ -128,6 +147,8 @@ const populatedDashboard = {
       last_open: "2026-05-31T12:00:00Z",
       time_seconds: 5400,
       time_label: "1h 30m",
+      pace_seconds_per_page: 675,
+      estimated_remaining_seconds: 81000,
       pages: 8,
       max_page: 80,
       total_pages: 200,
@@ -144,6 +165,17 @@ const populatedDashboard = {
       source_book_ids: ["1", "4"],
       source_md5s: ["piranesi-a", "piranesi-b"],
       merged_count: 2,
+      recent_sessions: [
+        {
+          started_at: "2026-05-31T10:00:00Z",
+          ended_at: "2026-05-31T11:00:00Z",
+          active_seconds: 2700,
+          elapsed_seconds: 3600,
+          event_count: 8,
+          book_ids: ["1"],
+          book_count: 1,
+        },
+      ],
     },
     {
       id: "2",
@@ -1644,5 +1676,68 @@ describe("App", () => {
     expect(csv).toContain("Notes,Records,Source book IDs");
     expect(csv).toContain("Earthsea Cycle,1,en,Finished");
     expect(csv).toContain("2,1; 4");
+  });
+
+  it("opens a detailed book dialog with related sessions", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return { mount_path: null, mounted: false, database_found: false, selected_path: null, permission_error: null, candidates: [] };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Piranesi" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Piranesi" });
+    expect(within(dialog).getByText("~22h 30m left")).toBeInTheDocument();
+    expect(within(dialog).getByText("11 min/page")).toBeInTheDocument();
+    expect(within(dialog).getByText("Recent sessions")).toBeInTheDocument();
+    expect(within(dialog).getByText("45m")).toBeInTheDocument();
+  });
+
+  it("opens recent-book details from its explicit action", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return { mount_path: null, mounted: false, database_found: false, selected_path: null, permission_error: null, candidates: [] };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await screen.findByText("Recent books");
+    await userEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
+    expect(await screen.findByRole("dialog", { name: "Piranesi" })).toBeInTheDocument();
+  });
+
+  it("shows per-device session insights for the all-devices dashboard", async () => {
+    const aggregateDashboard = {
+      ...populatedDashboard,
+      snapshot: { ...populatedDashboard.snapshot, id: "aggregate", source: "aggregate", device_id: "all" },
+      insights: {
+        sessions: {
+          available: true,
+          total: 2,
+          average_active_seconds: 2700,
+          longest_active_seconds: 3600,
+          recent: [{ ...populatedDashboard.insights.sessions.recent[0], device_label: "Primary Kobo" }],
+        },
+      },
+    };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return { mount_path: null, mounted: false, database_found: false, selected_path: null, permission_error: null, candidates: [] };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [aggregateDashboard.snapshot] };
+      return aggregateDashboard;
+    });
+
+    render(<App />);
+    await screen.findByText("Recent books");
+    expect(screen.getByText("Reading sessions")).toBeInTheDocument();
+    expect(screen.getByText("Primary Kobo")).toBeInTheDocument();
   });
 });

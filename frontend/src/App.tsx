@@ -159,6 +159,7 @@ import type {
   RecoveryBackup,
   RestorePreview,
   RestoreResult,
+  ReadingSession,
   Snapshot,
 } from "./types";
 
@@ -189,6 +190,15 @@ const emptyDashboard: Dashboard = {
     reading_books: 0,
     abandoned_books: 0,
     highlights: 0,
+  },
+  insights: {
+    sessions: {
+      available: false,
+      total: 0,
+      average_active_seconds: 0,
+      longest_active_seconds: 0,
+      recent: [],
+    },
   },
   charts: {
     daily: [],
@@ -300,6 +310,74 @@ function formatDurationLabel(seconds: number) {
   const minutes = totalMinutes % 60;
   if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
   return `${minutes}m`;
+}
+
+function formatPace(seconds: number | null) {
+  if (seconds == null) return "—";
+  return `${Math.max(1, Math.round(seconds / 60))} min/page`;
+}
+
+function estimateDescription(book: BookStats) {
+  if (book.estimated_remaining_seconds != null) return `~${formatDurationLabel(book.estimated_remaining_seconds)} left`;
+  if (effectiveStatus(book) !== "reading") return "Only shown for books in progress";
+  if (!book.total_pages || !book.max_page) return "Need a page total and current page";
+  return "Not enough data for an estimate";
+}
+
+function SessionTable({ sessions, showBooks = true }: { sessions: ReadingSession[]; showBooks?: boolean }) {
+  const showsDevice = sessions.some((session) => session.device_label);
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Started</TableHead>
+          <TableHead>Active</TableHead>
+          <TableHead>Elapsed</TableHead>
+          {showBooks ? <TableHead>Books</TableHead> : null}
+          {showsDevice ? <TableHead>Device</TableHead> : null}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {sessions.map((session) => (
+          <TableRow key={`${session.started_at}-${session.event_count}`}>
+            <TableCell>{formatDateTime(session.started_at)}</TableCell>
+            <TableCell>{formatDurationLabel(session.active_seconds)}</TableCell>
+            <TableCell>{formatDurationLabel(session.elapsed_seconds)}</TableCell>
+            {showBooks ? <TableCell>{session.book_count.toLocaleString()}</TableCell> : null}
+            {showsDevice ? <TableCell>{session.device_label ?? "—"}</TableCell> : null}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function BookActivityChart({ activity }: { activity: BookStats["recent_activity"] | undefined }) {
+  const data = activity ?? [];
+  return (
+    <ChartContainer config={chartConfig} className="h-56 w-full">
+      <BarChart accessibilityLayer data={data} margin={{ left: 12, right: 32, top: 8, bottom: 8 }}>
+        <CartesianGrid vertical={false} />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
+        <YAxis hide domain={[0, "dataMax"]} />
+        <ChartTooltip
+          cursor={false}
+          content={
+            <ChartTooltipContent
+              hideIndicator
+              formatter={(value, _name, item) => (
+                <div className="grid gap-1">
+                  <span className="text-muted-foreground">{String(item.payload.label)}</span>
+                  <span className="font-medium">{formatMinutes(Number(value))}</span>
+                </div>
+              )}
+            />
+          }
+        />
+        <Bar dataKey="minutes" barSize={16} fill="var(--color-minutes)" radius={4} />
+      </BarChart>
+    </ChartContainer>
+  );
 }
 
 function buildCalendarCells(calendar: Dashboard["charts"]["calendar"]) {
@@ -996,7 +1074,7 @@ function ViewportTableScrollArea({
   );
 }
 
-function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
+function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]; onSelectBook: (book: BookStats) => void }) {
   return (
     <Card>
       <CardHeader>
@@ -1018,12 +1096,13 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
                 <TableHead>Pages</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Progress</TableHead>
+                <TableHead aria-label="Details" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {books.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                     No books yet.
                   </TableCell>
                 </TableRow>
@@ -1042,11 +1121,108 @@ function RecentBooks({ books }: { books: Dashboard["recent_books"] }) {
                         <span className="w-12 text-xs text-muted-foreground">{formatProgress(book)}</span>
                       </div>
                     </TableCell>
+                    <TableCell>
+                      <Button variant="outline" size="sm" onClick={() => onSelectBook(book)}>Details</Button>
+                    </TableCell>
                   </TableRow>
                 ))
               )}
             </TableBody>
           </Table>
+        </ViewportTableScrollArea>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOpenChange: (open: boolean) => void }) {
+  const recentSessions = book?.recent_sessions ?? [];
+  return (
+    <Dialog open={book != null} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[min(90vh,780px)] overflow-y-auto sm:max-w-5xl">
+        {book ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>{book.title}</DialogTitle>
+              <DialogDescription>{book.authors}</DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-3 rounded-lg border p-3 sm:grid sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] sm:items-center">
+              <Badge className="w-fit" variant={statusBadgeVariant(book)}>{formatStatus(book)}</Badge>
+              <Progress value={book.progress ?? 0} />
+              <span className="font-medium">{formatProgress(book)}</span>
+              <span className="text-sm text-muted-foreground">
+                {estimateDescription(book)}
+              </span>
+            </div>
+            <Card size="sm">
+              <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <div><p className="text-xs text-muted-foreground">Reading time</p><p className="font-medium">{book.time_label}</p></div>
+                <div><p className="text-xs text-muted-foreground">Pages</p><p className="font-medium">{formatPageProgress(book)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Current pace</p><p className="font-medium">{formatPace(book.pace_seconds_per_page)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Annotations</p><p className="font-medium">{book.highlight_count + book.note_count}</p></div>
+                <div><p className="text-xs text-muted-foreground">Last opened</p><p className="font-medium">{formatDateTime(book.last_open)}</p></div>
+              </CardContent>
+            </Card>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recent reading</CardTitle>
+                  <CardDescription>Last 5 days</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4">
+                  <BookActivityChart activity={book.recent_activity} />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recent sessions</CardTitle>
+                  <CardDescription>Sessions that included this book.</CardDescription>
+                </CardHeader>
+                <CardContent className="px-0 pb-0">
+                  {recentSessions.length ? (
+                    <ViewportTableScrollArea ariaLabel="Book reading sessions" constrainToViewport={false} minimumHeight={220}>
+                      <SessionTable sessions={recentSessions} showBooks={false} />
+                    </ViewportTableScrollArea>
+                  ) : (
+                    <Empty className="border-x">
+                      <EmptyHeader>
+                        <EmptyTitle>No qualifying sessions</EmptyTitle>
+                        <EmptyDescription>This book has no recorded reading sessions yet.</EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReadingSessionsCard({ sessions }: { sessions: Dashboard["insights"]["sessions"] | undefined }) {
+  if (!sessions?.available) return null;
+  const recent = sessions.recent.slice(0, 10);
+  const hasDevices = recent.some((session) => session.device_label);
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>Reading sessions</CardTitle>
+          <CardDescription>
+            {hasDevices ? "Per-device sessions, shown together." : "Groups of reading activity separated by 15 minutes or more."}
+          </CardDescription>
+        </div>
+        <CardAction className="flex flex-wrap justify-end gap-2" aria-label="Reading sessions summary">
+          <Badge variant="outline">{sessions.total.toLocaleString()} total</Badge>
+          <Badge variant="outline">{formatDurationLabel(sessions.average_active_seconds)} average</Badge>
+          <Badge variant="outline">{formatDurationLabel(sessions.longest_active_seconds)} longest</Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="px-0 pb-0">
+        <ViewportTableScrollArea ariaLabel="Recent reading sessions" constrainToViewport={false} minimumHeight={220}>
+          <SessionTable sessions={recent} />
         </ViewportTableScrollArea>
       </CardContent>
     </Card>
@@ -1065,6 +1241,7 @@ function BooksView({
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [sorting, setSorting] = useState<SortingState>([{ id: "last_open", desc: true }]);
+  const [selectedBook, setSelectedBook] = useState<BookStats | null>(null);
   const dateFilteredBooks = useMemo(() => {
     if (!readingDate) return books;
     const selectedBookIds = new Set(readingDate.bookIds);
@@ -1077,9 +1254,15 @@ function BooksView({
         accessorKey: "title",
         header: ({ column }) => sortableHeader(column, "Title"),
         cell: ({ row }) => (
-          <span className="font-medium" title={row.original.title}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto justify-start p-0 text-left"
+            title={row.original.title}
+            onClick={() => setSelectedBook(row.original)}
+          >
             {row.original.title}
-          </span>
+          </Button>
         ),
       },
       {
@@ -1149,6 +1332,16 @@ function BooksView({
           </span>
         ),
       },
+      {
+        id: "details",
+        header: "",
+        cell: ({ row }) => (
+          <Button variant="outline" size="sm" onClick={() => setSelectedBook(row.original)}>
+            Details
+          </Button>
+        ),
+        enableSorting: false,
+      },
     ],
     [],
   );
@@ -1193,6 +1386,7 @@ function BooksView({
     : null;
 
   return (
+    <>
     <Card>
       <CardHeader>
         <div>
@@ -1294,10 +1488,13 @@ function BooksView({
         </ViewportTableScrollArea>
       </CardContent>
     </Card>
+    <BookDetailDialog book={selectedBook} onOpenChange={(open) => !open && setSelectedBook(null)} />
+    </>
   );
 }
 
 function DashboardView({ dashboard }: { dashboard: Dashboard }) {
+  const [selectedBook, setSelectedBook] = useState<BookStats | null>(null);
   const streakLabel =
     dashboard.summary.current_streak === 1
       ? "1 day"
@@ -1355,7 +1552,9 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
         <TopBooksChart data={dashboard.charts.top_books} />
       </section>
 
-      <RecentBooks books={dashboard.recent_books} />
+      <ReadingSessionsCard sessions={dashboard.insights?.sessions} />
+      <RecentBooks books={dashboard.recent_books} onSelectBook={setSelectedBook} />
+      <BookDetailDialog book={selectedBook} onOpenChange={(open) => !open && setSelectedBook(null)} />
     </>
   );
 }

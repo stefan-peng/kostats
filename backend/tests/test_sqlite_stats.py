@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from backend.app.errors import UnsupportedSchemaError
-from backend.app.sqlite_stats import SnapshotMeta, build_dashboard, current_streak
+from backend.app.sqlite_stats import SnapshotMeta, aggregate_dashboards, build_dashboard, current_streak
 
 
 def ts(year: int, month: int, day: int, hour: int = 12) -> int:
@@ -41,6 +41,25 @@ def create_current_db(path: Path) -> None:
             (1, 2, 1769990400, 1200, 180),
             (2, 20, 1769994000, 3600, 240),
             (2, 21, 1770080400, 600, 240);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_session_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE book (id INTEGER PRIMARY KEY, title TEXT, authors TEXT, last_open INTEGER, pages INTEGER);
+        CREATE TABLE page_stat_data (id_book INTEGER, page INTEGER, start_time INTEGER, duration INTEGER, total_pages INTEGER);
+        INSERT INTO book VALUES (1, 'Session One', 'Author', 1767261600, 100);
+        INSERT INTO book VALUES (2, 'Session Two', 'Author', 1767261600, 100);
+        INSERT INTO page_stat_data VALUES
+            (1, 1, 1767261600, 2700, 100),
+            (2, 1, 1767264300, 60, 100),
+            (1, 10, 1767265260, 60, 100),
+            (1, 11, 1767266221, 60, 100);
         """
     )
     conn.commit()
@@ -356,7 +375,96 @@ def test_build_dashboard_from_current_schema(tmp_path: Path) -> None:
     assert dashboard["books"][0]["source_book_ids"] == ["2"]
     assert dashboard["books"][0]["source_md5s"] == []
     assert dashboard["books"][0]["merged_count"] == 1
+    assert len(dashboard["books"][0]["recent_activity"]) == 5
+    assert dashboard["books"][0]["recent_activity"][-1]["minutes"] == 10.0
     assert dashboard["recent_books"][0]["title"] == "The Left Hand of Darkness"
+
+
+def test_sessions_and_book_pace_use_global_event_order(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_session_db(db_path)
+
+    dashboard = build_dashboard(db_path)
+
+    sessions = dashboard["insights"]["sessions"]
+    assert sessions["available"] is True
+    assert sessions["total"] == 2
+    assert sessions["recent"][1]["event_count"] == 3
+    assert sessions["recent"][1]["book_ids"] == ["1", "2"]
+    assert sessions["recent"][1]["elapsed_seconds"] == 3720
+    first_book = next(book for book in dashboard["books"] if book["id"] == "1")
+    assert first_book["pace_seconds_per_page"] == 940
+    assert first_book["estimated_remaining_seconds"] == 83660
+    assert len(first_book["recent_sessions"]) == 2
+
+
+def test_time_estimate_is_available_with_short_reading_history(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_session_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE page_stat_data SET duration = 60 WHERE id_book = 1")
+
+    dashboard = build_dashboard(db_path)
+
+    first_book = next(book for book in dashboard["books"] if book["id"] == "1")
+    assert first_book["time_seconds"] == 180
+    assert first_book["estimated_remaining_seconds"] == 5340
+
+
+def test_aggregate_dashboard_keeps_device_sessions_visible(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_session_db(db_path)
+    dashboard = build_dashboard(db_path, include_all_sessions=True)
+    snapshot = SnapshotMeta("one", "2026-01-01T00:00:00+00:00", "upload", None, str(db_path), 1, 0, "0")
+
+    aggregate = aggregate_dashboards([dashboard, dashboard], snapshots=[snapshot, snapshot])
+
+    assert aggregate["insights"]["sessions"]["available"] is True
+    assert aggregate["insights"]["sessions"]["total"] == 4
+    assert aggregate["insights"]["sessions"]["recent"][0]["device_label"] == "unknown"
+    aggregate_book = next(book for book in aggregate["books"] if book["title"] == "Session One")
+    assert aggregate_book["pages"] == 3
+    assert aggregate_book["pace_seconds_per_page"] == 1880
+    assert aggregate_book["estimated_remaining_seconds"] == 167320
+
+
+def test_single_dashboard_aggregate_does_not_expose_internal_session_data(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_session_db(db_path)
+    snapshot = SnapshotMeta("one", "2026-01-01T00:00:00+00:00", "upload", None, str(db_path), 1, 0, "0")
+
+    dashboard = build_dashboard(db_path, snapshot, include_all_sessions=True)
+    aggregate = aggregate_dashboards([dashboard], snapshots=[snapshot])
+
+    assert "_all_sessions" not in aggregate
+    assert all("_page_numbers" not in book for book in aggregate["books"])
+
+
+def test_aggregate_book_sessions_use_full_device_history(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_session_db(db_path)
+    first_snapshot = SnapshotMeta(
+        "one", "2026-01-01T00:00:00+00:00", "upload", None, str(db_path), 1, 0, "0", device_id="one", device_label="Device One"
+    )
+    second_snapshot = SnapshotMeta(
+        "two", "2026-01-02T00:00:00+00:00", "upload", None, str(db_path), 1, 0, "0", device_id="two", device_label="Device Two"
+    )
+    first = build_dashboard(db_path, first_snapshot, include_all_sessions=True)
+    second = build_dashboard(db_path, second_snapshot, include_all_sessions=True)
+    first_book = next(item for item in first["books"] if item["title"] == "Session One")
+    first_book["id"] = "merged:device-one"
+    for session in first["_all_sessions"]:
+        session["book_ids"] = ["merged:device-one" if book_id == "1" else book_id for book_id in session["book_ids"]]
+    expected_session = first["_all_sessions"][0]
+    first["insights"]["sessions"]["recent"] = []
+
+    aggregate = aggregate_dashboards([first, second], snapshots=[first_snapshot, second_snapshot])
+
+    book = next(item for item in aggregate["books"] if item["title"] == "Session One")
+    assert any(
+        session["started_at"] == expected_session["started_at"] and session["device_label"] == "Device One"
+        for session in book["recent_sessions"]
+    )
 
 
 def test_current_streak_counts_through_today() -> None:

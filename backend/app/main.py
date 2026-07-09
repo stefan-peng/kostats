@@ -63,12 +63,22 @@ def current_local_date() -> str:
 
 
 @lru_cache(maxsize=64)
-def cached_dashboard(snapshot: SnapshotMeta, fingerprint: tuple, today: str) -> dict:
-    return build_dashboard(Path(snapshot.path), snapshot, today=datetime.strptime(today, "%Y-%m-%d").date())
+def cached_dashboard(snapshot: SnapshotMeta, fingerprint: tuple, today: str, include_all_sessions: bool = False) -> dict:
+    return build_dashboard(
+        Path(snapshot.path),
+        snapshot,
+        today=datetime.strptime(today, "%Y-%m-%d").date(),
+        include_all_sessions=include_all_sessions,
+    )
 
 
-def dashboard_for_snapshot(snapshot: SnapshotMeta) -> dict:
-    return cached_dashboard(snapshot, snapshot_cache_fingerprint(snapshot), current_local_date())
+def dashboard_for_snapshot(snapshot: SnapshotMeta, *, include_all_sessions: bool = False) -> dict:
+    return cached_dashboard(
+        snapshot,
+        snapshot_cache_fingerprint(snapshot),
+        current_local_date(),
+        include_all_sessions,
+    )
 
 
 def known_device_rows() -> list[dict]:
@@ -463,7 +473,7 @@ def get_dashboard(snapshot_id: str = "latest", device_id: str = "all") -> dict:
             ]
             if len(snapshots) > 1:
                 try:
-                    dashboards = [dashboard_for_snapshot(item) for item in snapshots]
+                    dashboards = [dashboard_for_snapshot(item, include_all_sessions=True) for item in snapshots]
                 except FileNotFoundError as exc:
                     raise HTTPException(status_code=404, detail="Snapshot file is missing") from exc
                 except UnsupportedSchemaError as exc:
@@ -475,7 +485,7 @@ def get_dashboard(snapshot_id: str = "latest", device_id: str = "all") -> dict:
             backup_rows = backup_store().list_backups()
             snapshots = latest_effective_snapshots(snapshot_rows, backup_rows)
             try:
-                dashboards = [dashboard_for_snapshot(snapshot) for snapshot in snapshots]
+                dashboards = [dashboard_for_snapshot(snapshot, include_all_sessions=True) for snapshot in snapshots]
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=404, detail="Snapshot file is missing") from exc
             except UnsupportedSchemaError as exc:

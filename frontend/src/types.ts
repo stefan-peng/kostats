@@ -131,6 +131,8 @@ export type BookStats = {
   last_open: string | null;
   time_seconds: number;
   time_label: string;
+  pace_seconds_per_page: number | null;
+  estimated_remaining_seconds: number | null;
   pages: number;
   max_page: number | null;
   total_pages: number | null;
@@ -147,6 +149,19 @@ export type BookStats = {
   source_book_ids: string[];
   source_md5s: string[];
   merged_count: number;
+  recent_sessions: ReadingSession[];
+  recent_activity: Array<{ date: string; label: string; minutes: number }>;
+};
+
+export type ReadingSession = {
+  started_at: string;
+  ended_at: string;
+  active_seconds: number;
+  elapsed_seconds: number;
+  event_count: number;
+  book_ids: string[];
+  book_count: number;
+  device_label?: string;
 };
 
 export type Dashboard = {
@@ -163,6 +178,15 @@ export type Dashboard = {
     reading_books: number;
     abandoned_books: number;
     highlights: number;
+  };
+  insights: {
+    sessions: {
+      available: boolean;
+      total: number;
+      average_active_seconds: number;
+      longest_active_seconds: number;
+      recent: ReadingSession[];
+    };
   };
   charts: {
     daily: Array<{ date: string; label: string; minutes: number }>;
