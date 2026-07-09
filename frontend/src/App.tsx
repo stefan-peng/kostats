@@ -9,7 +9,10 @@ import {
   type ColumnDef,
   type ColumnFiltersState,
   type Column,
+  type ColumnSizingState,
   type SortingState,
+  type Table as TanStackTable,
+  type VisibilityState,
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
@@ -43,6 +46,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  SlidersHorizontal,
   Upload,
   AlertTriangle,
 } from "lucide-react";
@@ -74,6 +78,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Empty,
   EmptyContent,
@@ -241,6 +251,131 @@ const topBooksChartConfig = {
   },
 } satisfies ChartConfig;
 
+const bookColumnLabels: Record<string, string> = {
+  authors: "Author",
+  highlight_count: "Highlights",
+  last_open: "Last opened",
+  pages: "Pages seen",
+  position: "Position",
+  progress: "Progress",
+  records: "Records",
+  status: "Status",
+  time_seconds: "Time",
+  title: "Title",
+  details: "Details",
+};
+
+function tableColumnLabel<TData>(column: Column<TData, unknown>) {
+  if (typeof column.columnDef.header === "string") return column.columnDef.header;
+  return bookColumnLabels[column.id] ?? column.id;
+}
+
+function TableColumnPicker<TData>({ table }: { table: TanStackTable<TData> }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" className="w-full">
+          <SlidersHorizontal data-icon="inline-start" />
+          Columns
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {table
+          .getAllColumns()
+          .filter((column) => column.getCanHide())
+          .map((column) => (
+            <DropdownMenuCheckboxItem
+              key={column.id}
+              checked={column.getIsVisible()}
+              onCheckedChange={(value) => column.toggleVisibility(value === true)}
+            >
+              {tableColumnLabel(column)}
+            </DropdownMenuCheckboxItem>
+          ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ResizableDataTable<TData>({ table, emptyMessage }: { table: TanStackTable<TData>; emptyMessage: string }) {
+  const rows = table.getRowModel().rows;
+  function resizeWithKeyboard(event: ReactKeyboardEvent<HTMLDivElement>, column: Column<TData, unknown>) {
+    const step = event.shiftKey ? 40 : 16;
+    const minSize = column.columnDef.minSize ?? 20;
+    const maxSize = column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER;
+    const currentSize = column.getSize();
+    const nextSize = event.key === "ArrowLeft" ? currentSize - step
+      : event.key === "ArrowRight" ? currentSize + step
+        : event.key === "Home" ? minSize
+          : event.key === "End" ? maxSize
+            : null;
+
+    if (nextSize == null) return;
+    event.preventDefault();
+    table.setColumnSizing((sizes) => ({
+      ...sizes,
+      [column.id]: Math.min(maxSize, Math.max(minSize, nextSize)),
+    }));
+  }
+
+  return (
+    <Table className="min-w-full table-fixed" style={{ width: table.getTotalSize() }}>
+      <TableHeader>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <TableRow key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <TableHead
+                key={header.id}
+                aria-sort={ariaSortValue(header.column.getIsSorted())}
+                className="relative"
+                style={{ width: header.getSize() }}
+              >
+                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                {header.column.getCanResize() ? (
+                  <div
+                    aria-label={`Resize ${tableColumnLabel(header.column)} column`}
+                    aria-orientation="vertical"
+                    aria-valuemax={header.column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER}
+                    aria-valuemin={header.column.columnDef.minSize ?? 20}
+                    aria-valuenow={header.getSize()}
+                    aria-valuetext={`${header.getSize()} pixels`}
+                    className="absolute top-0 right-0 h-full w-2 cursor-col-resize touch-none select-none after:absolute after:top-2 after:bottom-2 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border hover:after:bg-primary focus-visible:after:bg-primary"
+                    onDoubleClick={() => header.column.resetSize()}
+                    onKeyDown={(event) => resizeWithKeyboard(event, header.column)}
+                    onMouseDown={header.getResizeHandler()}
+                    onTouchStart={header.getResizeHandler()}
+                    role="separator"
+                    tabIndex={0}
+                  />
+                ) : null}
+              </TableHead>
+            ))}
+          </TableRow>
+        ))}
+      </TableHeader>
+      <TableBody>
+        {rows.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={table.getVisibleLeafColumns().length} className="h-24 text-center text-muted-foreground">
+              {emptyMessage}
+            </TableCell>
+          </TableRow>
+        ) : (
+          rows.map((row) => (
+            <TableRow key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <TableCell key={cell.id} style={{ width: cell.column.getSize() }}>
+                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                </TableCell>
+              ))}
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
+  );
+}
+
 const deviceChartColors = [
   "var(--device-chart-1)",
   "var(--device-chart-2)",
@@ -326,29 +461,67 @@ function estimateDescription(book: BookStats) {
 
 function SessionTable({ sessions, showBooks = true }: { sessions: ReadingSession[]; showBooks?: boolean }) {
   const showsDevice = sessions.some((session) => session.device_label);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+  const columns = useMemo<ColumnDef<ReadingSession>[]>(
+    () => [
+      {
+        accessorKey: "started_at",
+        header: "Started",
+        cell: ({ row }) => formatDateTime(row.original.started_at),
+        size: 180,
+        minSize: 150,
+        maxSize: 260,
+      },
+      {
+        accessorKey: "active_seconds",
+        header: "Active",
+        cell: ({ row }) => formatDurationLabel(row.original.active_seconds),
+        size: 110,
+        minSize: 90,
+        maxSize: 180,
+      },
+      {
+        accessorKey: "elapsed_seconds",
+        header: "Elapsed",
+        cell: ({ row }) => formatDurationLabel(row.original.elapsed_seconds),
+        size: 110,
+        minSize: 90,
+        maxSize: 180,
+      },
+      ...(showBooks ? [{
+        accessorKey: "book_count" as const,
+        header: "Books",
+        cell: ({ row }: { row: { original: ReadingSession } }) => row.original.book_count.toLocaleString(),
+        size: 100,
+        minSize: 80,
+        maxSize: 160,
+      }] : []),
+      ...(showsDevice ? [{
+        accessorKey: "device_label" as const,
+        header: "Device",
+        cell: ({ row }: { row: { original: ReadingSession } }) => row.original.device_label ?? "—",
+        size: 160,
+        minSize: 120,
+        maxSize: 280,
+      }] : []),
+    ],
+    [showBooks, showsDevice],
+  );
+  const table = useReactTable({
+    data: sessions,
+    columns,
+    state: { columnVisibility, columnSizing },
+    onColumnVisibilityChange: setColumnVisibility,
+    onColumnSizingChange: setColumnSizing,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: "onChange",
+  });
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Started</TableHead>
-          <TableHead>Active</TableHead>
-          <TableHead>Elapsed</TableHead>
-          {showBooks ? <TableHead>Books</TableHead> : null}
-          {showsDevice ? <TableHead>Device</TableHead> : null}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {sessions.map((session) => (
-          <TableRow key={`${session.started_at}-${session.event_count}`}>
-            <TableCell>{formatDateTime(session.started_at)}</TableCell>
-            <TableCell>{formatDurationLabel(session.active_seconds)}</TableCell>
-            <TableCell>{formatDurationLabel(session.elapsed_seconds)}</TableCell>
-            {showBooks ? <TableCell>{session.book_count.toLocaleString()}</TableCell> : null}
-            {showsDevice ? <TableCell>{session.device_label ?? "—"}</TableCell> : null}
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <div className="grid gap-2">
+      <div className="w-32 justify-self-end"><TableColumnPicker table={table} /></div>
+      <ResizableDataTable table={table} emptyMessage="No sessions yet." />
+    </div>
   );
 }
 
@@ -618,7 +791,7 @@ function DeviceBanner({
 
   return (
     <Card aria-label="Device import status">
-      <CardHeader className="items-start gap-3 md:grid-cols-[1fr_auto]">
+      <CardHeader className="grid-cols-1 gap-3 @2xl/card-header:grid-cols-[minmax(0,1fr)_auto]">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <HardDrive />
@@ -643,7 +816,7 @@ function DeviceBanner({
             </CardDescription>
           </div>
         </div>
-        <CardAction className="flex flex-wrap justify-end gap-2">
+        <CardAction className="col-auto row-auto flex flex-wrap justify-self-start gap-2 @2xl/card-header:col-start-2 @2xl/card-header:row-span-2 @2xl/card-header:row-start-1 @2xl/card-header:justify-self-end">
           <Button disabled={busy || !found} onClick={onImport}>
             {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
             {busy ? "Importing..." : "Import from Kobo"}
@@ -1075,10 +1248,95 @@ function ViewportTableScrollArea({
 }
 
 function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]; onSelectBook: (book: BookStats) => void }) {
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+  const columns = useMemo<ColumnDef<BookStats>[]>(
+    () => [
+      {
+        accessorKey: "title",
+        header: "Title",
+        cell: ({ row }) => <span className="font-medium whitespace-normal" title={row.original.title}>{row.original.title}</span>,
+        enableHiding: false,
+        size: 300,
+        minSize: 180,
+        maxSize: 600,
+      },
+      {
+        accessorKey: "authors",
+        header: "Author",
+        cell: ({ row }) => <span className="whitespace-normal" title={row.original.authors}>{row.original.authors}</span>,
+        size: 200,
+        minSize: 120,
+        maxSize: 400,
+      },
+      {
+        id: "last_open",
+        accessorFn: (book) => book.last_open ?? "",
+        header: "Last opened",
+        cell: ({ row }) => <span title={formatDateTime(row.original.last_open)}>{formatDateTime(row.original.last_open)}</span>,
+        size: 180,
+        minSize: 150,
+        maxSize: 260,
+      },
+      { accessorKey: "time_label", header: "Time", size: 100, minSize: 80, maxSize: 160 },
+      {
+        accessorKey: "pages",
+        header: "Pages",
+        cell: ({ row }) => row.original.pages.toLocaleString(),
+        size: 100,
+        minSize: 80,
+        maxSize: 160,
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) => <Badge variant={statusBadgeVariant(row.original)}>{formatStatus(row.original)}</Badge>,
+        size: 120,
+        minSize: 100,
+        maxSize: 180,
+      },
+      {
+        id: "progress",
+        header: "Progress",
+        cell: ({ row }) => (
+          <div className="flex min-w-32 items-center gap-2">
+            <Progress value={row.original.progress ?? 0} />
+            <span className="w-12 text-xs text-muted-foreground">{formatProgress(row.original)}</span>
+          </div>
+        ),
+        size: 200,
+        minSize: 160,
+        maxSize: 320,
+      },
+      {
+        id: "details",
+        header: "",
+        cell: ({ row }) => <Button variant="outline" size="sm" onClick={() => onSelectBook(row.original)}>Details</Button>,
+        enableHiding: false,
+        enableSorting: false,
+        enableResizing: false,
+        size: 96,
+        minSize: 84,
+        maxSize: 120,
+      },
+    ],
+    [onSelectBook],
+  );
+  const table = useReactTable({
+    data: books,
+    columns,
+    state: { columnVisibility, columnSizing },
+    onColumnVisibilityChange: setColumnVisibility,
+    onColumnSizingChange: setColumnSizing,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: "onChange",
+  });
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Recent books</CardTitle>
+        <CardAction className="w-32"><TableColumnPicker table={table} /></CardAction>
       </CardHeader>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea
@@ -1086,49 +1344,7 @@ function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]
           constrainToViewport={false}
           minimumHeight={recentBooksTableMinimumHeight}
         >
-          <Table className="min-w-[860px] table-fixed max-[560px]:min-w-[620px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Title</TableHead>
-                <TableHead>Author</TableHead>
-                <TableHead>Last opened</TableHead>
-                <TableHead>Time</TableHead>
-                <TableHead>Pages</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Progress</TableHead>
-                <TableHead aria-label="Details" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {books.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
-                    No books yet.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                books.map((book) => (
-                  <TableRow key={book.id}>
-                    <TableCell className="font-medium" title={book.title}>{book.title}</TableCell>
-                    <TableCell title={book.authors}>{book.authors}</TableCell>
-                    <TableCell title={formatDateTime(book.last_open)}>{formatDateTime(book.last_open)}</TableCell>
-                    <TableCell>{book.time_label}</TableCell>
-                    <TableCell>{book.pages.toLocaleString()}</TableCell>
-                    <TableCell><Badge variant={statusBadgeVariant(book)}>{formatStatus(book)}</Badge></TableCell>
-                    <TableCell>
-                      <div className="flex min-w-32 items-center gap-2">
-                        <Progress value={book.progress ?? 0} />
-                        <span className="w-12 text-xs text-muted-foreground">{formatProgress(book)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Button variant="outline" size="sm" onClick={() => onSelectBook(book)}>Details</Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <ResizableDataTable table={table} emptyMessage="No books yet." />
         </ViewportTableScrollArea>
       </CardContent>
     </Card>
@@ -1240,6 +1456,8 @@ function BooksView({
 }) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const [sorting, setSorting] = useState<SortingState>([{ id: "last_open", desc: true }]);
   const [selectedBook, setSelectedBook] = useState<BookStats | null>(null);
   const dateFilteredBooks = useMemo(() => {
@@ -1257,33 +1475,49 @@ function BooksView({
           <Button
             variant="ghost"
             size="sm"
-            className="h-auto justify-start p-0 text-left"
+            className="h-auto justify-start p-0 text-left whitespace-normal"
             title={row.original.title}
             onClick={() => setSelectedBook(row.original)}
           >
             {row.original.title}
           </Button>
         ),
+        enableHiding: false,
+        size: 300,
+        minSize: 180,
+        maxSize: 600,
       },
       {
         accessorKey: "authors",
         header: "Author",
-        cell: ({ row }) => <span title={row.original.authors}>{row.original.authors}</span>,
+        cell: ({ row }) => <span className="whitespace-normal" title={row.original.authors}>{row.original.authors}</span>,
+        size: 200,
+        minSize: 120,
+        maxSize: 400,
       },
       {
         accessorKey: "time_seconds",
         header: ({ column }) => sortableHeader(column, "Time"),
         cell: ({ row }) => row.original.time_label,
+        size: 100,
+        minSize: 80,
+        maxSize: 160,
       },
       {
         accessorKey: "pages",
         header: ({ column }) => sortableHeader(column, "Pages seen"),
         cell: ({ row }) => row.original.pages.toLocaleString(),
+        size: 110,
+        minSize: 90,
+        maxSize: 180,
       },
       {
         id: "position",
         header: "Position",
         cell: ({ row }) => formatPageProgress(row.original),
+        size: 130,
+        minSize: 110,
+        maxSize: 200,
       },
       {
         id: "status",
@@ -1295,6 +1529,9 @@ function BooksView({
         filterFn: (row, _columnId, filterValue) =>
           matchesProgressFilter(row.original, filterValue as BookProgressFilter),
         enableSorting: false,
+        size: 120,
+        minSize: 100,
+        maxSize: 180,
       },
       {
         id: "progress",
@@ -1306,11 +1543,17 @@ function BooksView({
             <span className="w-12 text-xs text-muted-foreground">{formatProgress(row.original)}</span>
           </div>
         ),
+        size: 200,
+        minSize: 160,
+        maxSize: 320,
       },
       {
         accessorKey: "highlight_count",
         header: "Highlights",
         cell: ({ row }) => row.original.highlight_count.toLocaleString(),
+        size: 110,
+        minSize: 90,
+        maxSize: 180,
       },
       {
         id: "last_open",
@@ -1321,6 +1564,9 @@ function BooksView({
             {formatDateTime(row.original.last_open)}
           </span>
         ),
+        size: 180,
+        minSize: 150,
+        maxSize: 260,
       },
       {
         id: "records",
@@ -1331,6 +1577,9 @@ function BooksView({
             {formatSourceRecords(row.original)}
           </span>
         ),
+        size: 100,
+        minSize: 80,
+        maxSize: 180,
       },
       {
         id: "details",
@@ -1341,6 +1590,11 @@ function BooksView({
           </Button>
         ),
         enableSorting: false,
+        enableHiding: false,
+        enableResizing: false,
+        size: 96,
+        minSize: 84,
+        maxSize: 120,
       },
     ],
     [],
@@ -1352,10 +1606,14 @@ function BooksView({
     state: {
       sorting,
       columnFilters,
+      columnVisibility,
+      columnSizing,
       globalFilter,
     },
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    onColumnVisibilityChange: setColumnVisibility,
+    onColumnSizingChange: setColumnSizing,
     onGlobalFilterChange: setGlobalFilter,
     globalFilterFn: (row, _columnId, filterValue) => {
       const query = String(filterValue ?? "").trim().toLocaleLowerCase();
@@ -1367,10 +1625,10 @@ function BooksView({
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    columnResizeMode: "onChange",
   });
 
   const filteredRows = table.getFilteredRowModel().rows;
-  const visibleRows = table.getRowModel().rows;
   const progressFilter =
     (table.getColumn("status")?.getFilterValue() as BookProgressFilter | undefined) ?? "all";
   const totalTimeSeconds = filteredRows.reduce((total, row) => total + row.original.time_seconds, 0);
@@ -1410,13 +1668,13 @@ function BooksView({
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <FieldGroup className="md:grid-cols-[minmax(220px,1fr)_180px]" aria-label="Book table controls">
+        <FieldGroup className="md:grid-cols-[minmax(220px,1fr)_180px_180px]" aria-label="Book table controls">
           <Field>
-            <FieldLabel htmlFor="book-search">Search</FieldLabel>
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
                 id="book-search"
+                aria-label="Search"
                 className="pl-8"
                 value={globalFilter}
                 onChange={(event) => setGlobalFilter(event.target.value)}
@@ -1426,14 +1684,13 @@ function BooksView({
             </div>
           </Field>
           <Field>
-            <FieldLabel htmlFor="book-status">Status</FieldLabel>
             <Select
               value={progressFilter}
               onValueChange={(value) => {
                 table.getColumn("status")?.setFilterValue(value === "all" ? undefined : value);
               }}
             >
-              <SelectTrigger id="book-status" className="w-full">
+              <SelectTrigger id="book-status" aria-label="Status" className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1447,44 +1704,14 @@ function BooksView({
               </SelectContent>
             </Select>
           </Field>
+          <Field>
+            <TableColumnPicker table={table} />
+          </Field>
         </FieldGroup>
       </CardContent>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea ariaLabel="Books table">
-          <Table className="min-w-[1280px] table-fixed max-[560px]:min-w-[860px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id} aria-sort={ariaSortValue(header.column.getIsSorted())}>
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(header.column.columnDef.header, header.getContext())}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {visibleRows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={columns.length} className="h-24 text-center text-muted-foreground">
-                    No books match the current filters.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                visibleRows.map((row) => (
-                  <TableRow key={row.id}>
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <ResizableDataTable table={table} emptyMessage="No books match the current filters." />
         </ViewportTableScrollArea>
       </CardContent>
     </Card>
@@ -1572,76 +1799,99 @@ function SnapshotsView({
   onSelectSnapshot: (id: string) => void;
   onReassignSnapshot: (snapshotId: string, deviceId: string) => void;
 }) {
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
+  const columns = useMemo<ColumnDef<Snapshot>[]>(
+    () => [
+      {
+        accessorKey: "imported_at",
+        header: "Imported",
+        cell: ({ row }) => <span title={formatDateTime(row.original.imported_at)}>{formatDateTime(row.original.imported_at)}</span>,
+        size: 180,
+        minSize: 150,
+        maxSize: 260,
+      },
+      {
+        id: "device",
+        header: "Device",
+        cell: ({ row }) => (
+          <Select value={row.original.device_id ?? ""} onValueChange={(deviceId) => onReassignSnapshot(row.original.id, deviceId)}>
+            <SelectTrigger className="h-8" aria-label={`Device for ${row.original.id}`}>
+              <SelectValue placeholder={row.original.device_label ?? "Unknown device"} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {devices.map((device) => <SelectItem key={device.id} value={device.id}>{device.label}</SelectItem>)}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        ),
+        size: 180,
+        minSize: 140,
+        maxSize: 280,
+      },
+      {
+        id: "source",
+        header: "Source",
+        cell: ({ row }) => <code className="whitespace-normal" title={row.original.source_path ?? row.original.source}>{formatSnapshotSource(row.original)}</code>,
+        size: 280,
+        minSize: 180,
+        maxSize: 520,
+      },
+      {
+        accessorKey: "file_size",
+        header: "Size",
+        cell: ({ row }) => formatBytes(row.original.file_size),
+        size: 100,
+        minSize: 80,
+        maxSize: 160,
+      },
+      { accessorKey: "schema_version", header: "Schema", size: 100, minSize: 80, maxSize: 160 },
+      {
+        accessorKey: "id",
+        header: "Snapshot ID",
+        cell: ({ row }) => <code className="whitespace-normal" title={row.original.id}>{row.original.id}</code>,
+        size: 240,
+        minSize: 160,
+        maxSize: 480,
+      },
+      {
+        id: "action",
+        header: "Action",
+        cell: ({ row }) => (
+          <Button size="sm" variant="outline" disabled={row.original.id === activeSnapshotId} onClick={() => onSelectSnapshot(row.original.id)}>
+            {row.original.id === activeSnapshotId ? "Current" : "View"}
+          </Button>
+        ),
+        enableHiding: false,
+        enableSorting: false,
+        enableResizing: false,
+        size: 96,
+        minSize: 84,
+        maxSize: 120,
+      },
+    ],
+    [activeSnapshotId, devices, onReassignSnapshot, onSelectSnapshot],
+  );
+  const table = useReactTable({
+    data: snapshots,
+    columns,
+    state: { columnVisibility, columnSizing },
+    onColumnVisibilityChange: setColumnVisibility,
+    onColumnSizingChange: setColumnSizing,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: "onChange",
+  });
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Snapshots</CardTitle>
+        <CardAction className="w-32"><TableColumnPicker table={table} /></CardAction>
       </CardHeader>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea ariaLabel="Snapshots table">
-          <Table className="min-w-[1120px] table-fixed max-[560px]:min-w-[820px] [&_td]:overflow-hidden [&_td]:text-ellipsis [&_th]:overflow-hidden [&_th]:text-ellipsis">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Imported</TableHead>
-                <TableHead>Device</TableHead>
-                <TableHead>Source</TableHead>
-                <TableHead>Size</TableHead>
-                <TableHead>Schema</TableHead>
-                <TableHead>Snapshot ID</TableHead>
-                <TableHead>Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {snapshots.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
-                    No snapshots have been imported yet.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                snapshots.map((snapshot) => (
-                  <TableRow key={snapshot.id}>
-                    <TableCell title={formatDateTime(snapshot.imported_at)}>{formatDateTime(snapshot.imported_at)}</TableCell>
-                    <TableCell title={snapshot.device_label ?? undefined}>
-                      <Select
-                        value={snapshot.device_id ?? ""}
-                        onValueChange={(deviceId) => onReassignSnapshot(snapshot.id, deviceId)}
-                      >
-                        <SelectTrigger className="h-8" aria-label={`Device for ${snapshot.id}`}>
-                          <SelectValue placeholder={snapshot.device_label ?? "Unknown device"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            {devices.map((device) => (
-                              <SelectItem key={device.id} value={device.id}>
-                                {device.label}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell title={snapshot.source_path ?? snapshot.source}>
-                      <code>{formatSnapshotSource(snapshot)}</code>
-                    </TableCell>
-                    <TableCell>{formatBytes(snapshot.file_size)}</TableCell>
-                    <TableCell>{snapshot.schema_version}</TableCell>
-                    <TableCell title={snapshot.id}><code>{snapshot.id}</code></TableCell>
-                    <TableCell>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={snapshot.id === activeSnapshotId}
-                        onClick={() => onSelectSnapshot(snapshot.id)}
-                      >
-                        {snapshot.id === activeSnapshotId ? "Current" : "View"}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+          <ResizableDataTable table={table} emptyMessage="No snapshots have been imported yet." />
         </ViewportTableScrollArea>
       </CardContent>
     </Card>

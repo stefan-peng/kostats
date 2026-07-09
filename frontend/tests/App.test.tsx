@@ -1123,6 +1123,22 @@ describe("App", () => {
     expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
     expect(screen.getByText("80 / 200")).toBeInTheDocument();
     expect(screen.getByText("2 records")).toBeInTheDocument();
+    const titleResizer = screen.getByRole("separator", { name: "Resize Title column" });
+    const initialTitleWidth = Number(titleResizer.getAttribute("aria-valuenow"));
+    expect(titleResizer).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(titleResizer, { key: "ArrowRight" });
+    expect(titleResizer).toHaveAttribute("aria-valuenow", String(initialTitleWidth + 16));
+
+    await userEvent.click(screen.getByRole("button", { name: "Columns" }));
+    const authorColumn = screen.getByRole("menuitemcheckbox", { name: "Author" });
+    expect(authorColumn).toHaveAttribute("data-state", "checked");
+    await userEvent.click(authorColumn);
+    expect(screen.queryByRole("columnheader", { name: /Author/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Ursula K. Le Guin")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Columns" }));
+    await userEvent.click(screen.getByRole("menuitemcheckbox", { name: "Author" }));
+    expect(await screen.findByRole("columnheader", { name: /Author/ })).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Search"), "le guin");
     expect(screen.getByText("1 of 3 books")).toBeInTheDocument();
@@ -1709,6 +1725,7 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByText("Recent books");
+    expect(screen.queryByRole("separator", { name: "Resize column" })).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
     expect(await screen.findByRole("dialog", { name: "Piranesi" })).toBeInTheDocument();
   });
