@@ -1184,7 +1184,9 @@ function ViewportTableScrollArea({
   minimumHeight?: number;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const tableContentRef = useRef<HTMLDivElement>(null);
   const [maxHeight, setMaxHeight] = useState<number>();
+  const [viewportHeight, setViewportHeight] = useState<number>();
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     const content = event.currentTarget;
@@ -1211,6 +1213,7 @@ function ViewportTableScrollArea({
   useLayoutEffect(() => {
     if (!constrainToViewport) {
       setMaxHeight(undefined);
+      setViewportHeight(undefined);
       return;
     }
 
@@ -1233,18 +1236,44 @@ function ViewportTableScrollArea({
     };
   }, [constrainToViewport, minimumHeight]);
 
+  useLayoutEffect(() => {
+    if (!constrainToViewport || maxHeight == null) {
+      setViewportHeight(undefined);
+      return;
+    }
+
+    const tableContent = tableContentRef.current;
+    if (!tableContent) return;
+
+    const updateViewportHeight = () => {
+      const contentHeight = tableContent.scrollHeight;
+      if (contentHeight > 0) setViewportHeight(Math.min(contentHeight, maxHeight));
+    };
+
+    updateViewportHeight();
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateViewportHeight);
+    resizeObserver?.observe(tableContent);
+    const mutationObserver = new MutationObserver(updateViewportHeight);
+    mutationObserver.observe(tableContent, { childList: true, subtree: true });
+
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver.disconnect();
+    };
+  }, [constrainToViewport, maxHeight]);
+
   return (
     <ScrollArea
       aria-label={ariaLabel}
-      className="min-w-0 overflow-auto rounded-b-xl overscroll-contain [scrollbar-gutter:stable] [&_[data-slot=table-container]]:min-w-0 [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead]:bg-card"
+      className="min-w-0 overflow-hidden rounded-b-xl overscroll-contain [scrollbar-gutter:stable] [&_[data-slot=table-container]]:min-w-0 [&_[data-slot=table-container]]:!overflow-visible [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead]:bg-card"
       onKeyDown={handleKeyDown}
       ref={contentRef}
       role="region"
-      style={maxHeight == null ? undefined : { maxHeight }}
+      style={maxHeight == null ? undefined : { height: viewportHeight ?? maxHeight }}
       tabIndex={0}
       type="auto"
     >
-      {children}
+      <div ref={tableContentRef}>{children}</div>
       <ScrollBar orientation="horizontal" />
     </ScrollArea>
   );

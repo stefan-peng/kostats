@@ -1105,16 +1105,17 @@ describe("App", () => {
 
     render(<App />);
 
-    const expectedTableMaxHeight = `${window.innerHeight - 53}px`;
+    const expectedTableHeight = `${window.innerHeight - 53}px`;
     await screen.findByRole("table");
     const recentRegion = screen.getByRole("region", { name: "Recent books table" });
-    expect(recentRegion).not.toHaveStyle({ maxHeight: expectedTableMaxHeight });
+    expect(recentRegion).not.toHaveStyle({ height: expectedTableHeight });
     expect(screen.getByRole("region", { name: "Recent books table" })).toHaveAttribute("tabindex", "0");
 
     await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
     expect(screen.getAllByText("Books").length).toBeGreaterThan(1);
     const booksTableRegion = screen.getByRole("region", { name: "Books table" });
-    expect(booksTableRegion).toHaveStyle({ maxHeight: expectedTableMaxHeight });
+    expect(booksTableRegion).toHaveStyle({ height: expectedTableHeight });
+    expect(booksTableRegion).toHaveClass("overflow-hidden");
     expect(booksTableRegion).toHaveAttribute("tabindex", "0");
     Object.defineProperty(booksTableRegion, "clientHeight", { configurable: true, value: 400 });
     Object.defineProperty(booksTableRegion, "scrollHeight", { configurable: true, value: 1_200 });
