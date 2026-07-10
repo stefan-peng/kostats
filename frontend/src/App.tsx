@@ -569,6 +569,7 @@ function BookActivityChart({
           content={
             <ChartTooltipContent
               hideIndicator
+              hideZeroValues
               formatter={(value, _name, item) => (
                 <div className="grid gap-1">
                   <span className="text-muted-foreground">{String(item.payload.label)}</span>
@@ -1114,6 +1115,7 @@ function DeviceStackedBarChart({
                 cursor={false}
                 content={
                   <ChartTooltipContent
+                    hideZeroValues
                     formatter={(value, name) => (
                       <div className="grid gap-1">
                         <span className="text-muted-foreground">{config[String(name)]?.label ?? String(name)}</span>

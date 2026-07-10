@@ -114,6 +114,13 @@ ${colorConfig
 
 const ChartTooltip = RechartsPrimitive.Tooltip
 
+export function filterZeroTooltipPayload<T extends { value?: unknown }>(
+  payload: readonly T[] | undefined,
+  hideZeroValues: boolean,
+) {
+  return payload?.filter((item) => !hideZeroValues || Number(item.value) !== 0)
+}
+
 function ChartTooltipContent({
   active,
   payload,
@@ -121,6 +128,7 @@ function ChartTooltipContent({
   indicator = "dot",
   hideLabel = false,
   hideIndicator = false,
+  hideZeroValues = false,
   label,
   labelFormatter,
   labelClassName,
@@ -132,6 +140,7 @@ function ChartTooltipContent({
   React.ComponentProps<"div"> & {
     hideLabel?: boolean
     hideIndicator?: boolean
+    hideZeroValues?: boolean
     indicator?: "line" | "dot" | "dashed"
     nameKey?: string
     labelKey?: string
@@ -144,12 +153,17 @@ function ChartTooltipContent({
   >) {
   const { config } = useChart()
 
+  const visiblePayload = React.useMemo(
+    () => filterZeroTooltipPayload(payload, hideZeroValues),
+    [hideZeroValues, payload],
+  )
+
   const tooltipLabel = React.useMemo(() => {
-    if (hideLabel || !payload?.length) {
+    if (hideLabel || !visiblePayload?.length) {
       return null
     }
 
-    const [item] = payload
+    const [item] = visiblePayload
     const key = `${labelKey ?? item?.dataKey ?? item?.name ?? "value"}`
     const itemConfig = getPayloadConfigFromPayload(config, item, key)
     const value =
@@ -160,7 +174,7 @@ function ChartTooltipContent({
     if (labelFormatter) {
       return (
         <div className={cn("font-medium", labelClassName)}>
-          {labelFormatter(value, payload)}
+          {labelFormatter(value, visiblePayload)}
         </div>
       )
     }
@@ -173,18 +187,18 @@ function ChartTooltipContent({
   }, [
     label,
     labelFormatter,
-    payload,
+    visiblePayload,
     hideLabel,
     labelClassName,
     config,
     labelKey,
   ])
 
-  if (!active || !payload?.length) {
+  if (!active || !visiblePayload?.length) {
     return null
   }
 
-  const nestLabel = payload.length === 1 && indicator !== "dot"
+  const nestLabel = visiblePayload.length === 1 && indicator !== "dot"
 
   return (
     <div
@@ -195,7 +209,7 @@ function ChartTooltipContent({
     >
       {!nestLabel ? tooltipLabel : null}
       <div className="grid gap-1.5">
-        {payload
+        {visiblePayload
           .filter((item) => item.type !== "none")
           .map((item, index) => {
             const key = `${nameKey ?? item.name ?? item.dataKey ?? "value"}`

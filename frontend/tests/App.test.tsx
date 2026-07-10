@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
+import { filterZeroTooltipPayload } from "../src/components/ui/chart";
 
 const emptyDashboard = {
   has_data: false,
@@ -434,6 +435,13 @@ async function selectRadixOption(label: string, option: string) {
 }
 
 describe("App", () => {
+  it("omits zero-minute devices from bar chart tooltips", () => {
+    expect(filterZeroTooltipPayload([
+      { name: "active", value: 30 },
+      { name: "idle", value: 0 },
+    ], true)).toEqual([{ name: "active", value: 30 }]);
+  });
+
   beforeEach(() => {
     window.history.replaceState(null, "", window.location.pathname);
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -1801,7 +1809,8 @@ describe("App", () => {
     await screen.findByText("Recent books");
     const readingSessionsCard = screen.getByText("Reading sessions").closest('[data-slot="card"]');
     expect(readingSessionsCard).toBeInTheDocument();
-    const columnsButton = within(readingSessionsCard!).getByRole("button", { name: "Columns" });
+    if (!(readingSessionsCard instanceof HTMLElement)) throw new Error("Reading sessions card was not found");
+    const columnsButton = within(readingSessionsCard).getByRole("button", { name: "Columns" });
     expect(columnsButton.parentElement?.parentElement).toHaveClass("pr-4");
     expect(columnsButton.parentElement?.parentElement).not.toHaveClass("sm:pr-0");
     const devicePill = screen.getByText("Primary Kobo");
