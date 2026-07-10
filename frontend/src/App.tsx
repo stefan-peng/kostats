@@ -539,7 +539,7 @@ function SessionTable({ sessions, showBooks = true }: { sessions: ReadingSession
   });
   return (
     <div className="grid min-w-0 gap-2">
-      <div className="flex justify-end pr-4 sm:pr-0"><div className="w-32"><TableColumnPicker table={table} /></div></div>
+      <div className="flex justify-end pr-4"><div className="w-32"><TableColumnPicker table={table} /></div></div>
       <ResizableDataTable table={table} emptyMessage="No sessions yet." />
     </div>
   );

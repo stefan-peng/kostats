@@ -1799,7 +1799,11 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByText("Recent books");
-    expect(screen.getByText("Reading sessions")).toBeInTheDocument();
+    const readingSessionsCard = screen.getByText("Reading sessions").closest('[data-slot="card"]');
+    expect(readingSessionsCard).toBeInTheDocument();
+    const columnsButton = within(readingSessionsCard!).getByRole("button", { name: "Columns" });
+    expect(columnsButton.parentElement?.parentElement).toHaveClass("pr-4");
+    expect(columnsButton.parentElement?.parentElement).not.toHaveClass("sm:pr-0");
     const devicePill = screen.getByText("Primary Kobo");
     expect(devicePill).toHaveClass("device-pill");
     expect(devicePill).toHaveStyle({ "--device-color": "var(--device-chart-3)" });
