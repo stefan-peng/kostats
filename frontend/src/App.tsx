@@ -386,6 +386,22 @@ const deviceChartColors = [
   "var(--device-chart-6)",
 ];
 
+function deviceColor(deviceId: string) {
+  let hash = 0;
+  for (let index = 0; index < deviceId.length; index += 1) {
+    hash = (hash * 31 + deviceId.charCodeAt(index)) | 0;
+  }
+  return deviceChartColors[(hash >>> 0) % deviceChartColors.length];
+}
+
+function deviceColorStyle(deviceId: string): CSSProperties {
+  return { "--device-color": deviceColor(deviceId) } as CSSProperties;
+}
+
+function DevicePill({ id, label }: { id: string; label: string }) {
+  return <Badge className="device-pill" style={deviceColorStyle(id)} variant="outline">{label}</Badge>;
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "Never";
   return new Intl.DateTimeFormat(undefined, {
@@ -501,7 +517,10 @@ function SessionTable({ sessions, showBooks = true }: { sessions: ReadingSession
       ...(showsDevice ? [{
         accessorKey: "device_label" as const,
         header: "Device",
-        cell: ({ row }: { row: { original: ReadingSession } }) => row.original.device_label ?? "—",
+        cell: ({ row }: { row: { original: ReadingSession } }) => {
+          const { device_id: deviceId, device_label: deviceLabel } = row.original;
+          return deviceLabel ? <DevicePill id={deviceId ?? deviceLabel} label={deviceLabel} /> : "—";
+        },
         size: 160,
         minSize: 120,
         maxSize: 280,
@@ -519,17 +538,28 @@ function SessionTable({ sessions, showBooks = true }: { sessions: ReadingSession
     columnResizeMode: "onChange",
   });
   return (
-    <div className="grid gap-2">
-      <div className="w-32 justify-self-end"><TableColumnPicker table={table} /></div>
+    <div className="grid min-w-0 gap-2">
+      <div className="flex justify-end pr-4 sm:pr-0"><div className="w-32"><TableColumnPicker table={table} /></div></div>
       <ResizableDataTable table={table} emptyMessage="No sessions yet." />
     </div>
   );
 }
 
-function BookActivityChart({ activity }: { activity: BookStats["recent_activity"] | undefined }) {
+function BookActivityChart({
+  activity,
+  devices,
+}: {
+  activity: BookStats["recent_activity"] | undefined;
+  devices: BookStats["recent_activity_devices"];
+}) {
   const data = activity ?? [];
+  const activityDevices = devices ?? [];
+  const config = Object.fromEntries(
+    activityDevices.map((device) => [device.id, { label: device.label, color: deviceColor(device.id) }]),
+  ) satisfies ChartConfig;
+  const splitByDevice = activityDevices.length > 0;
   return (
-    <ChartContainer config={chartConfig} className="h-56 w-full">
+    <ChartContainer config={splitByDevice ? config : chartConfig} className="h-56 w-full">
       <BarChart accessibilityLayer data={data} margin={{ left: 12, right: 32, top: 8, bottom: 8 }}>
         <CartesianGrid vertical={false} />
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
@@ -542,13 +572,26 @@ function BookActivityChart({ activity }: { activity: BookStats["recent_activity"
               formatter={(value, _name, item) => (
                 <div className="grid gap-1">
                   <span className="text-muted-foreground">{String(item.payload.label)}</span>
-                  <span className="font-medium">{formatMinutes(Number(value))}</span>
+                  <span className="font-medium">
+                    {splitByDevice
+                      ? `${config[String(_name)]?.label ?? String(_name)} · ${formatMinutes(Number(value))}`
+                      : formatMinutes(Number(value))}
+                  </span>
                 </div>
               )}
             />
           }
         />
-        <Bar dataKey="minutes" barSize={16} fill="var(--color-minutes)" isAnimationActive={false} radius={4} />
+        {splitByDevice ? activityDevices.map((device, index) => (
+          <Bar
+            key={device.id}
+            dataKey={device.id}
+            stackId="device"
+            fill={deviceColor(device.id)}
+            isAnimationActive={false}
+            radius={index === activityDevices.length - 1 ? [4, 4, 0, 0] : 0}
+          />
+        )) : <Bar dataKey="minutes" barSize={16} fill="var(--color-minutes)" isAnimationActive={false} radius={4} />}
       </BarChart>
     </ChartContainer>
   );
@@ -1041,11 +1084,11 @@ function DeviceStackedBarChart({
   unit: "minutes" | "hours";
 }) {
   const config = Object.fromEntries(
-    devices.map((device, index) => [
+    devices.map((device) => [
       device.id,
       {
         label: device.label,
-        color: deviceChartColors[index % deviceChartColors.length],
+        color: deviceColor(device.id),
       },
     ]),
   ) satisfies ChartConfig;
@@ -1085,7 +1128,7 @@ function DeviceStackedBarChart({
                   key={device.id}
                   dataKey={device.id}
                   stackId="device"
-                  fill={deviceChartColors[index % deviceChartColors.length]}
+                  fill={deviceColor(device.id)}
                   isAnimationActive={false}
                   radius={index === devices.length - 1 ? [4, 4, 0, 0] : 0}
                 />
@@ -1418,7 +1461,7 @@ function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOp
                   <CardDescription>Last 5 days</CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-4">
-                  <BookActivityChart activity={book.recent_activity} />
+                  <BookActivityChart activity={book.recent_activity} devices={book.recent_activity_devices} />
                 </CardContent>
               </Card>
               <Card>
@@ -2696,7 +2739,6 @@ export default function App() {
       if (assignment?.new_device_label === "") throw new Error("Enter a device name before uploading.");
       const result = await uploadDatabase(file, assignment);
       selectedSnapshotId.current = null;
-      if (result.snapshot.device_id) setDeviceFilter(result.snapshot.device_id);
       setDashboard(result.dashboard);
       setReadingDateFilter(null);
       selectView("dashboard");

@@ -519,6 +519,41 @@ describe("App", () => {
     expect(screen.getByLabelText("Import device")).toHaveTextContent("Auto-detected");
   });
 
+  it("keeps the selected device after manually uploading a snapshot", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: null,
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/import/upload")) {
+        return { snapshot: populatedDashboard.snapshot, dashboard: populatedDashboard };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await screen.findByText("Recent books");
+    await selectRadixOption("Device filter", "Travel Kobo");
+    await waitFor(() => expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo"));
+
+    await userEvent.click(within(screen.getByLabelText("Device import status")).getByRole("button", { name: "Upload DB" }));
+    const uploadDialog = await screen.findByRole("dialog", { name: "Upload DB" });
+    await userEvent.click(within(uploadDialog).getByRole("button", { name: "Upload DB" }));
+    const fileInput = document.querySelector('input[type="file"]');
+    expect(fileInput).not.toBeNull();
+    fireEvent.change(fileInput!, { target: { files: [new File(["sqlite"], "statistics.sqlite3")] } });
+
+    await waitFor(() => expect(screen.getByText("Database uploaded")).toBeInTheDocument());
+    expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo");
+  });
+
   it("follows the system dark mode preference", async () => {
     stubSystemMedia({ dark: true });
     mockFetch((url) => {
@@ -1746,7 +1781,11 @@ describe("App", () => {
           total: 2,
           average_active_seconds: 2700,
           longest_active_seconds: 3600,
-          recent: [{ ...populatedDashboard.insights.sessions.recent[0], device_label: "Primary Kobo" }],
+          recent: [{
+            ...populatedDashboard.insights.sessions.recent[0],
+            device_id: "primary-kobo",
+            device_label: "Primary Kobo",
+          }],
         },
       },
     };
@@ -1761,6 +1800,8 @@ describe("App", () => {
     render(<App />);
     await screen.findByText("Recent books");
     expect(screen.getByText("Reading sessions")).toBeInTheDocument();
-    expect(screen.getByText("Primary Kobo")).toBeInTheDocument();
+    const devicePill = screen.getByText("Primary Kobo");
+    expect(devicePill).toHaveClass("device-pill");
+    expect(devicePill).toHaveStyle({ "--device-color": "var(--device-chart-3)" });
   });
 });

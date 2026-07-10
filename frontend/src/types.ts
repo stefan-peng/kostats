@@ -150,7 +150,8 @@ export type BookStats = {
   source_md5s: string[];
   merged_count: number;
   recent_sessions: ReadingSession[];
-  recent_activity: Array<{ date: string; label: string; minutes: number }>;
+  recent_activity: RecentActivity[];
+  recent_activity_devices?: Array<{ id: string; label: string }>;
 };
 
 export type ReadingSession = {
@@ -162,6 +163,14 @@ export type ReadingSession = {
   book_ids: string[];
   book_count: number;
   device_label?: string;
+  device_id?: string;
+};
+
+export type RecentActivity = {
+  date: string;
+  label: string;
+  minutes: number;
+  [deviceId: string]: string | number;
 };
 
 export type Dashboard = {

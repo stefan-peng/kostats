@@ -465,6 +465,8 @@ def test_aggregate_book_sessions_use_full_device_history(tmp_path: Path) -> None
         session["started_at"] == expected_session["started_at"] and session["device_label"] == "Device One"
         for session in book["recent_sessions"]
     )
+    assert {device["label"] for device in book["recent_activity_devices"]} == {"Device One", "Device Two"}
+    assert sum(book["recent_activity"][-1][device["id"]] for device in book["recent_activity_devices"]) == book["recent_activity"][-1]["minutes"]
 
 
 def test_current_streak_counts_through_today() -> None:

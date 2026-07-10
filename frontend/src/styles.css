@@ -92,6 +92,11 @@
   --sidebar-ring: #69ce7b;
 }
 
+.device-pill {
+  border-color: var(--device-color);
+  background-color: color-mix(in srgb, var(--device-color) 16%, transparent);
+}
+
 .calendar-scroll {
   max-width: 100%;
   overflow-x: auto;
