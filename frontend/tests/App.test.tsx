@@ -695,7 +695,9 @@ describe("App", () => {
     expect(screen.queryByText("Longer-term patterns and all-time leaders.")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Device import status").closest('[data-slot="card"]')).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "Piranesi, Susanna Clarke, 40%, 1h 30m" }));
+    const currentBookRow = screen.getByRole("button", { name: "Piranesi, Susanna Clarke, 40%, 1h 30m" });
+    expect(currentBookRow).toHaveClass("rounded-md", "px-3");
+    await userEvent.click(currentBookRow);
     expect(await screen.findByRole("dialog", { name: "Piranesi" })).toBeInTheDocument();
   });
 
@@ -1142,6 +1144,11 @@ describe("App", () => {
     expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
     const snapshotsLink = screen.getByRole("link", { name: /Snapshots/i });
     expect(within(snapshotsLink.closest('[data-sidebar="menu-item"]') as HTMLElement).getByText("1")).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+    });
+    await waitFor(() => expect(autoImportUrls).toHaveLength(2));
   });
 
   it("makes sidebar sections navigable", async () => {

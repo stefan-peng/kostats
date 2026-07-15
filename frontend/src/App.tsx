@@ -1558,7 +1558,7 @@ function ReadingProgressPanel({
     return (
       <Button
         variant="ghost"
-        className="h-auto w-full min-w-0 justify-start rounded-none px-0 py-3 text-left"
+        className="h-auto w-full min-w-0 justify-start rounded-md px-3 py-3 text-left"
         onClick={() => onSelectBook(book)}
         aria-label={`${book.title}, ${book.authors}, ${formatProgress(book)}, ${book.time_label}`}
       >
