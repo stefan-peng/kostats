@@ -2724,9 +2724,12 @@ export default function App() {
   const pendingUploadAssignment = useRef<DeviceAssignment | undefined>(undefined);
   const selectedSnapshotId = useRef<string | null>(null);
   const deviceStatusKey = useRef<string | null>(null);
+  const latestDeviceStatus = useRef<DeviceStatus | null>(null);
+  const autoImportRetryRequired = useRef(false);
   const deviceStatusRefreshInFlight = useRef(false);
 
   function publishDeviceStatus(nextDeviceStatus: DeviceStatus) {
+    latestDeviceStatus.current = nextDeviceStatus;
     const nextKey = JSON.stringify(nextDeviceStatus);
     if (nextKey === deviceStatusKey.current) return;
     deviceStatusKey.current = nextKey;
@@ -2737,7 +2740,17 @@ export default function App() {
     if (deviceStatusRefreshInFlight.current) return;
     deviceStatusRefreshInFlight.current = true;
     try {
-      publishDeviceStatus(await getDeviceStatus());
+      const nextDeviceStatus = await getDeviceStatus();
+      const previousDeviceStatus = latestDeviceStatus.current;
+      publishDeviceStatus(nextDeviceStatus);
+      const readyToImport =
+        nextDeviceStatus.mounted &&
+        nextDeviceStatus.database_found &&
+        !nextDeviceStatus.permission_error;
+      const becameReadyToImport = !previousDeviceStatus?.mounted && readyToImport;
+      if (becameReadyToImport || (autoImportRetryRequired.current && readyToImport)) {
+        await refresh();
+      }
     } finally {
       deviceStatusRefreshInFlight.current = false;
     }
@@ -2751,8 +2764,10 @@ export default function App() {
         const autoResult = await autoImportFromKobo();
         if (!autoResult.device) throw new Error("Auto-import response did not include device status");
         deviceStatus = autoResult.device;
+        autoImportRetryRequired.current = false;
       } catch (err) {
         // Background Kobo sync is a UI boundary: show the import failure while keeping local snapshots visible.
+        autoImportRetryRequired.current = true;
         nextAutoImportError = `Auto-import failed: ${err instanceof Error ? err.message : "Could not import from Kobo"}`;
       }
     }
@@ -2820,7 +2835,6 @@ export default function App() {
       if (assignment?.new_device_label === "") throw new Error("Enter a device name before importing.");
       const result = await importFromKobo(assignment);
       selectedSnapshotId.current = null;
-      if (result.snapshot.device_id) setDeviceFilter(result.snapshot.device_id);
       setDashboard(result.dashboard);
       setReadingDateFilter(null);
       selectView("dashboard");

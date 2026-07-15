@@ -562,6 +562,38 @@ describe("App", () => {
     expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo");
   });
 
+  it("keeps the selected device after manually importing from Kobo", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    mockFetch((url, init) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return { imported: false, reason: "unchanged", snapshot: null, device: mountedStatus };
+      }
+      if (url.startsWith("/api/import/kobo") && init?.method === "POST") {
+        return { snapshot: autoSnapshot, dashboard: autoDashboard };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [autoSnapshot, populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await screen.findByText("Recent books");
+    await selectRadixOption("Device filter", "Travel Kobo");
+    await waitFor(() => expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo"));
+
+    await userEvent.click(within(screen.getByLabelText("Device import status")).getByRole("button", { name: "Import from Kobo" }));
+
+    await waitFor(() => expect(screen.getByText("Imported from Kobo")).toBeInTheDocument());
+    expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo");
+  });
+
   it("follows the system dark mode preference", async () => {
     stubSystemMedia({ dark: true });
     mockFetch((url) => {
@@ -1031,6 +1063,58 @@ describe("App", () => {
     expect(dashboardUrls).toHaveLength(1);
   });
 
+  it("auto-imports once when a Kobo becomes ready after startup", async () => {
+    const disconnectedStatus = {
+      mount_path: null,
+      mounted: false,
+      database_found: false,
+      selected_path: null,
+      permission_error: null,
+      candidates: [],
+    };
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    let connected = false;
+    const autoImportUrls: string[] = [];
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return connected ? mountedStatus : disconnectedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        autoImportUrls.push(url);
+        return {
+          imported: true,
+          reason: "changed",
+          snapshot: autoSnapshot,
+          device: mountedStatus,
+          dashboard: autoDashboard,
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: connected ? [autoSnapshot] : [] };
+      return connected ? autoDashboard : emptyDashboard;
+    });
+
+    render(<App />);
+    await screen.findByText("No database yet");
+    connected = true;
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+    });
+
+    await waitFor(() => expect(autoImportUrls).toEqual(["/api/import/kobo/auto"]));
+    expect(await screen.findByText("Recent books")).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+    });
+    await waitFor(() => expect(autoImportUrls).toHaveLength(1));
+  });
+
   it("continues showing local snapshot data when startup auto-import fails", async () => {
     const mountedStatus = {
       mount_path: "/Volumes/KOBOeReader",
@@ -1040,9 +1124,11 @@ describe("App", () => {
       permission_error: null,
       candidates: [],
     };
+    const autoImportUrls: string[] = [];
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) return mountedStatus;
       if (url.startsWith("/api/import/kobo/auto")) {
+        autoImportUrls.push(url);
         return new Error("Unsupported KOReader statistics schema: missing book table");
       }
       if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
