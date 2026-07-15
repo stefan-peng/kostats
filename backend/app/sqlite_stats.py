@@ -651,8 +651,13 @@ def build_dashboard(
         page_progress = None
         if total_pages and max_page:
             page_progress = min(100, round((max_page / total_pages) * 100))
+        status = sidecar.get("status") if sidecar else None
         percent_finished = sidecar.get("percent_finished") if sidecar else None
-        progress = round(float(percent_finished) * 100) if percent_finished is not None else page_progress
+        progress = (
+            100
+            if status == "complete"
+            else round(float(percent_finished) * 100) if percent_finished is not None else page_progress
+        )
         last_open = (
             datetime.fromtimestamp(latest_book["last_open_timestamp"]).astimezone().isoformat()
             if latest_book["last_open_timestamp"]
@@ -667,7 +672,7 @@ def build_dashboard(
         remaining_pages = max(total_pages - max_page, 0) if total_pages and max_page else None
         estimated_remaining_seconds = None
         if (
-            effective_book_status({"status": sidecar.get("status") if sidecar else None, "progress": progress}) == "reading"
+            effective_book_status({"status": status, "progress": progress}) == "reading"
             and pace_seconds_per_page is not None
             and remaining_pages is not None
         ):
@@ -694,7 +699,7 @@ def build_dashboard(
             "total_pages": total_pages,
             "progress": progress,
             "percent_finished": percent_finished,
-            "status": sidecar.get("status") if sidecar else None,
+            "status": status,
             "status_modified": sidecar.get("status_modified") if sidecar else None,
             "highlight_count": int(sidecar.get("highlight_count") or 0) if sidecar else 0,
             "note_count": int(sidecar.get("note_count") or 0) if sidecar else 0,

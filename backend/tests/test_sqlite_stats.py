@@ -709,7 +709,7 @@ def test_sidecar_status_and_exact_progress_override_page_progress(tmp_path: Path
     abandoned = next(book for book in dashboard["books"] if book["authors"] == "Author Two")
 
     assert completed["status"] == "complete"
-    assert completed["progress"] == 47
+    assert completed["progress"] == 100
     assert completed["percent_finished"] == pytest.approx(0.4666666667)
     assert completed["highlight_count"] == 3
     assert completed["note_count"] == 1

@@ -672,6 +672,7 @@ function formatBytes(bytes: number) {
 }
 
 function formatProgress(book: BookStats) {
+  if (effectiveStatus(book) === "complete") return "100%";
   if (book.percent_finished != null) {
     const value = Math.round(book.percent_finished * 1000) / 10;
     return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;

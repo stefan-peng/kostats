@@ -1359,7 +1359,7 @@ describe("App", () => {
     await userEvent.clear(screen.getByLabelText("Search"));
     await selectRadixOption("Status", "Finished");
     expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
-    expect(screen.getByText("75%")).toBeInTheDocument();
+    expect(screen.getByText("100%")).toBeInTheDocument();
     expect(screen.queryByText("Piranesi")).not.toBeInTheDocument();
 
     await selectRadixOption("Status", "Reading");
