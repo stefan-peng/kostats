@@ -476,7 +476,15 @@ function estimateDescription(book: BookStats) {
   return "Not enough data for an estimate";
 }
 
-function SessionTable({ sessions, showBooks = true }: { sessions: ReadingSession[]; showBooks?: boolean }) {
+function SessionTable({
+  sessions,
+  showBooks = true,
+  showColumnPicker = true,
+}: {
+  sessions: ReadingSession[];
+  showBooks?: boolean;
+  showColumnPicker?: boolean;
+}) {
   const showsDevice = sessions.some((session) => session.device_label);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
@@ -539,7 +547,9 @@ function SessionTable({ sessions, showBooks = true }: { sessions: ReadingSession
   });
   return (
     <div className="grid min-w-0 gap-2">
-      <div className="flex justify-end pr-4"><div className="w-32"><TableColumnPicker table={table} /></div></div>
+      {showColumnPicker ? (
+        <div className="flex justify-end pr-4"><div className="w-32"><TableColumnPicker table={table} /></div></div>
+      ) : null}
       <ResizableDataTable table={table} emptyMessage="No sessions yet." />
     </div>
   );
@@ -834,6 +844,42 @@ function DeviceBanner({
   const showLatest = Boolean(latestSnapshot && activeSnapshot?.id !== latestSnapshot.id);
   const uploadAssignmentReady = isUploadAssignmentReady(importDevice, importDeviceLabel);
 
+  if (compact) {
+    return (
+      <div
+        aria-label="Device import status"
+        className="flex min-w-0 flex-col gap-2 border-b pb-3 text-sm sm:flex-row sm:items-center"
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+          <Badge variant={stateVariant}>{stateLabel}</Badge>
+          <span className="text-muted-foreground">{snapshotLabel}</span>
+          <span className="font-medium">{activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
+          {activeSnapshot ? (
+            <span className="min-w-0 truncate text-muted-foreground" title={formatSnapshotSource(activeSnapshot)}>
+              {formatSnapshotSource(activeSnapshot)}
+            </span>
+          ) : null}
+          {showLatest ? (
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span>Latest</span>
+              <span className="text-foreground">{formatDateTime(latestSnapshot!.imported_at)}</span>
+            </span>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button size="sm" aria-label="Import from Kobo" disabled={busy || !found} onClick={onImport}>
+            {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+            {busy ? "Importing..." : "Import"}
+          </Button>
+          <Button size="sm" variant="outline" disabled={busy} onClick={onUploadClick}>
+            <Upload data-icon="inline-start" />
+            Upload DB
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <Card aria-label="Device import status">
       <CardHeader className="grid-cols-1 gap-3 @2xl/card-header:grid-cols-[minmax(0,1fr)_auto]">
@@ -845,19 +891,6 @@ function DeviceBanner({
             <CardTitle>Kobo / KOReader</CardTitle>
             <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <Badge variant={stateVariant}>{stateLabel}</Badge>
-              {compact ? (
-                <>
-                  <span>{snapshotLabel}</span>
-                  <span>{activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
-                  {showLatest ? (
-                    <>
-                      <span>Latest</span>
-                      <span>{formatDateTime(latestSnapshot!.imported_at)}</span>
-                    </>
-                  ) : null}
-                  {activeSnapshot ? <span>{formatSnapshotSource(activeSnapshot)}</span> : null}
-                </>
-              ) : null}
             </CardDescription>
           </div>
         </div>
@@ -872,26 +905,24 @@ function DeviceBanner({
           </Button>
         </CardAction>
       </CardHeader>
-      {!compact ? (
-        <CardContent className="grid gap-4">
-          <div className="grid gap-2">
-            <div className="text-sm font-medium">Import as</div>
-            <DeviceAssignmentControl
-              devices={devices}
-              value={importDevice}
-              newLabel={importDeviceLabel}
-              onValueChange={onImportDeviceChange}
-              onNewLabelChange={onImportDeviceLabelChange}
-              includeAuto
-            />
-          </div>
-          <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-            <SnapshotMeta label={snapshotLabel} snapshot={activeSnapshot} />
-            {showLatest ? <SnapshotMeta label="Latest" snapshot={latestSnapshot} /> : null}
-            <SnapshotMeta label="Source" snapshot={activeSnapshot} source />
-          </div>
-        </CardContent>
-      ) : null}
+      <CardContent className="grid gap-4">
+        <div className="grid gap-2">
+          <div className="text-sm font-medium">Import as</div>
+          <DeviceAssignmentControl
+            devices={devices}
+            value={importDevice}
+            newLabel={importDeviceLabel}
+            onValueChange={onImportDeviceChange}
+            onNewLabelChange={onImportDeviceLabelChange}
+            includeAuto
+          />
+        </div>
+        <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          <SnapshotMeta label={snapshotLabel} snapshot={activeSnapshot} />
+          {showLatest ? <SnapshotMeta label="Latest" snapshot={latestSnapshot} /> : null}
+          <SnapshotMeta label="Source" snapshot={activeSnapshot} source />
+        </div>
+      </CardContent>
     </Card>
   );
 }
@@ -1000,6 +1031,15 @@ function isUploadAssignmentReady(value: string, label: string) {
   return true;
 }
 
+function PrimaryMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="min-w-0 border-border/70 py-1 sm:border-l sm:pl-6 sm:first:border-l-0 sm:first:pl-0">
+      <div className="font-heading text-3xl leading-none text-primary tabular-nums lg:text-4xl">{value}</div>
+      <div className="mt-2 text-sm text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
 function MetricCard({ label, value }: { label: string; value: string | number }) {
   return (
     <Card size="sm">
@@ -1018,11 +1058,13 @@ function ReadingBarChart({
   data,
   valueKey,
   formatValue,
+  dominant = false,
 }: {
   title: string;
   data: Array<Record<string, string | number>>;
   valueKey: "minutes" | "hours";
   formatValue: (value: number) => string;
+  dominant?: boolean;
 }) {
   return (
     <Card>
@@ -1033,7 +1075,7 @@ function ReadingBarChart({
         {data.length === 0 ? (
           <EmptyPanel icon={<CalendarDays />} title="No reading data yet" />
         ) : (
-          <ChartContainer config={chartConfig} className="h-64 w-full">
+          <ChartContainer config={chartConfig} className={cn(dominant ? "h-[17rem]" : "h-64", "w-full")}>
             <BarChart accessibilityLayer data={data} margin={{ left: 0, right: 0, top: 8 }}>
               <CartesianGrid vertical={false} />
               <XAxis
@@ -1078,11 +1120,13 @@ function DeviceStackedBarChart({
   data,
   devices,
   unit,
+  dominant = false,
 }: {
   title: string;
   data: Array<Record<string, string | number>>;
   devices: Array<{ id: string; label: string }>;
   unit: "minutes" | "hours";
+  dominant?: boolean;
 }) {
   const config = Object.fromEntries(
     devices.map((device) => [
@@ -1106,7 +1150,7 @@ function DeviceStackedBarChart({
         {data.length === 0 || devices.length === 0 ? (
           <EmptyPanel icon={<CalendarDays />} title="No reading data yet" />
         ) : (
-          <ChartContainer config={config} className="h-64 w-full">
+          <ChartContainer config={config} className={cn(dominant ? "h-[17rem]" : "h-64", "w-full")}>
             <BarChart accessibilityLayer data={data} margin={{ left: 0, right: 0, top: 8 }}>
               <CartesianGrid vertical={false} />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
@@ -1494,19 +1538,76 @@ function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOp
   );
 }
 
+function ReadingProgressPanel({
+  books,
+  recentBooks,
+  onSelectBook,
+}: {
+  books: BookStats[];
+  recentBooks: Dashboard["recent_books"];
+  onSelectBook: (book: BookStats) => void;
+}) {
+  const current =
+    recentBooks.find((book) => effectiveStatus(book) === "reading")
+    ?? books.find((book) => effectiveStatus(book) === "reading")
+    ?? null;
+  const recent = recentBooks.filter((book) => book.id !== current?.id).slice(0, 3);
+
+  function BookProgressRow({ book }: { book: BookStats }) {
+    return (
+      <Button
+        variant="ghost"
+        className="h-auto w-full min-w-0 justify-start rounded-none px-0 py-3 text-left"
+        onClick={() => onSelectBook(book)}
+        aria-label={`${book.title}, ${book.authors}, ${formatProgress(book)}, ${book.time_label}`}
+      >
+        <span className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-4">
+          <span className="min-w-0">
+            <span className="block line-clamp-2 font-heading text-base leading-tight whitespace-normal" title={book.title}>
+              {book.title}
+            </span>
+            <span className="mt-1 block truncate text-xs font-normal text-muted-foreground" title={book.authors}>
+              {book.authors}
+            </span>
+          </span>
+          <span className="grid gap-1.5 text-right">
+            <span className="text-xs font-medium text-primary">{formatProgress(book)}</span>
+            <Progress value={book.progress ?? 0} aria-label={`${book.title} progress`} />
+            <span className="text-xs font-normal text-muted-foreground">{book.time_label}</span>
+          </span>
+        </span>
+      </Button>
+    );
+  }
+
+  return (
+    <Card className="min-w-0">
+      <CardHeader>
+        <CardTitle>Currently reading</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-0">
+        <div aria-label="Current book">
+          {current ? <BookProgressRow book={current} /> : <p className="py-3 text-sm text-muted-foreground">No book in progress.</p>}
+        </div>
+        <Separator />
+        <div aria-label="Recently read books">
+          <h3 className="pt-4 font-heading text-lg leading-snug font-medium tracking-[-0.01em]">Recently read</h3>
+          {recent.length ? recent.map((book) => <BookProgressRow key={book.id} book={book} />) : (
+            <p className="py-3 text-sm text-muted-foreground">No other recent books.</p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ReadingSessionsCard({ sessions }: { sessions: Dashboard["insights"]["sessions"] | undefined }) {
   if (!sessions?.available) return null;
-  const recent = sessions.recent.slice(0, 10);
-  const hasDevices = recent.some((session) => session.device_label);
+  const recent = sessions.recent.slice(0, 5);
   return (
-    <Card>
-      <CardHeader>
-        <div>
-          <CardTitle>Reading sessions</CardTitle>
-          <CardDescription>
-            {hasDevices ? "Per-device sessions, shown together." : "Groups of reading activity separated by 15 minutes or more."}
-          </CardDescription>
-        </div>
+    <Card size="sm">
+      <CardHeader className="items-center">
+        <CardTitle>Recent sessions</CardTitle>
         <CardAction className="flex flex-wrap justify-end gap-2" aria-label="Reading sessions summary">
           <Badge variant="outline">{sessions.total.toLocaleString()} total</Badge>
           <Badge variant="outline">{formatDurationLabel(sessions.average_active_seconds)} average</Badge>
@@ -1515,7 +1616,7 @@ function ReadingSessionsCard({ sessions }: { sessions: Dashboard["insights"]["se
       </CardHeader>
       <CardContent className="px-0 pb-0">
         <ViewportTableScrollArea ariaLabel="Recent reading sessions" constrainToViewport={false} minimumHeight={220}>
-          <SessionTable sessions={recent} />
+          <SessionTable sessions={recent} showColumnPicker={false} />
         </ViewportTableScrollArea>
       </CardContent>
     </Card>
@@ -1810,25 +1911,33 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
         <EmptyPanel icon={<Database />} title="No database yet" description="Import from Kobo or upload a KOReader database." />
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <MetricCard label="Total time" value={dashboard.summary.total_time_label} />
-        <MetricCard label="Reading days" value={dashboard.summary.reading_days} />
-        <MetricCard label="Books" value={dashboard.summary.books} />
-        <MetricCard label="Pages" value={dashboard.summary.pages.toLocaleString()} />
-        <MetricCard label="Current streak" value={streakLabel} />
-        <MetricCard label="Finished" value={dashboard.summary.finished_books} />
-        <MetricCard label="Reading" value={dashboard.summary.reading_books} />
-        <MetricCard label="Abandoned" value={dashboard.summary.abandoned_books} />
-        <MetricCard label="Highlights" value={dashboard.summary.highlights} />
+      <section aria-labelledby="reading-overview-title" className="grid gap-5">
+        <h1 id="reading-overview-title" className="font-heading text-3xl leading-tight tracking-tight lg:text-4xl">
+          Reading overview
+        </h1>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+          <PrimaryMetric label="Total reading time" value={dashboard.summary.total_time_label} />
+          <PrimaryMetric label="Days read" value={dashboard.summary.reading_days.toLocaleString()} />
+          <PrimaryMetric label="Books in library" value={dashboard.summary.books.toLocaleString()} />
+          <PrimaryMetric label="Pages read" value={dashboard.summary.pages.toLocaleString()} />
+        </div>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t pt-3 text-sm" aria-label="Additional reading metrics">
+          <span><span className="text-muted-foreground">Current streak</span> <strong className="ml-1 font-medium">{streakLabel}</strong></span>
+          <span><span className="text-muted-foreground">Finished</span> <strong className="ml-1 font-medium">{dashboard.summary.finished_books.toLocaleString()}</strong></span>
+          <span><span className="text-muted-foreground">Reading</span> <strong className="ml-1 font-medium">{dashboard.summary.reading_books.toLocaleString()}</strong></span>
+          <span><span className="text-muted-foreground">Abandoned</span> <strong className="ml-1 font-medium">{dashboard.summary.abandoned_books.toLocaleString()}</strong></span>
+          <span><span className="text-muted-foreground">Highlights</span> <strong className="ml-1 font-medium">{dashboard.summary.highlights.toLocaleString()}</strong></span>
+        </div>
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-3">
+      <section className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(20rem,0.85fr)]">
         {dashboard.charts.devices?.length && dashboard.charts.daily_by_device?.length ? (
           <DeviceStackedBarChart
-            title="Daily reading by device"
+            title="Daily reading"
             data={dashboard.charts.daily_by_device}
             devices={dashboard.charts.devices}
             unit="minutes"
+            dominant
           />
         ) : (
           <ReadingBarChart
@@ -1836,27 +1945,40 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
             data={dashboard.charts.daily}
             valueKey="minutes"
             formatValue={(minutes) => formatDurationLabel(minutes * 60)}
+            dominant
           />
         )}
-        {dashboard.charts.devices?.length && dashboard.charts.monthly_by_device?.length ? (
-          <DeviceStackedBarChart
-            title="Monthly reading by device"
-            data={dashboard.charts.monthly_by_device}
-            devices={dashboard.charts.devices}
-            unit="hours"
-          />
-        ) : (
-          <ReadingBarChart
-            title="Monthly reading"
-            data={dashboard.charts.monthly}
-            valueKey="hours"
-            formatValue={(hours) => formatDurationLabel(hours * 3600)}
-          />
-        )}
-        <TopBooksChart data={dashboard.charts.top_books} />
+        <ReadingProgressPanel
+          books={dashboard.books}
+          recentBooks={dashboard.recent_books}
+          onSelectBook={setSelectedBook}
+        />
       </section>
 
       <ReadingSessionsCard sessions={dashboard.insights?.sessions} />
+
+      <section aria-labelledby="more-insights-title" className="grid gap-3 pt-2">
+        <h2 id="more-insights-title" className="font-heading text-xl">More reading insights</h2>
+        <div className="grid gap-4 xl:grid-cols-2">
+          {dashboard.charts.devices?.length && dashboard.charts.monthly_by_device?.length ? (
+            <DeviceStackedBarChart
+              title="Monthly reading by device"
+              data={dashboard.charts.monthly_by_device}
+              devices={dashboard.charts.devices}
+              unit="hours"
+            />
+          ) : (
+            <ReadingBarChart
+              title="Monthly reading"
+              data={dashboard.charts.monthly}
+              valueKey="hours"
+              formatValue={(hours) => formatDurationLabel(hours * 3600)}
+            />
+          )}
+          <TopBooksChart data={dashboard.charts.top_books} />
+        </div>
+      </section>
+
       <RecentBooks books={dashboard.recent_books} onSelectBook={setSelectedBook} />
       <BookDetailDialog book={selectedBook} onOpenChange={(open) => !open && setSelectedBook(null)} />
     </>
@@ -2856,7 +2978,7 @@ export default function App() {
     };
   }, [dashboard.charts.calendar.days, readingDateFilter]);
   const navItems: NavItem[] = [
-    { id: "dashboard", label: "Dashboard", icon: Home },
+    { id: "dashboard", label: "Overview", icon: Home },
     { id: "snapshots", label: "Snapshots", icon: Database, badge: snapshots.length },
     { id: "backups", label: "Backups", icon: ArchiveRestore, badge: backups.length },
     { id: "books", label: "Books", icon: Library },
@@ -2907,7 +3029,7 @@ export default function App() {
               <DeviceSelector devices={devices} value={deviceFilter} onChange={handleDeviceFilterChange} />
             </div>
           </header>
-          <div className="grid gap-4 p-4 md:p-6">
+          <div className={cn("grid gap-4 p-4 md:p-6", activeView === "dashboard" && "overview-page gap-3 md:p-5")}>
             <DeviceBanner
               status={device}
               devices={devices}

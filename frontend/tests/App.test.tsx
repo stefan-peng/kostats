@@ -633,6 +633,83 @@ describe("App", () => {
     expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
   });
 
+  it("renders the editorial overview hierarchy with compact provenance", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Reading overview", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Overview/i })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByText("Total reading time")).toBeInTheDocument();
+    expect(screen.getByText("Days read")).toBeInTheDocument();
+    expect(screen.getByText("Books in library")).toBeInTheDocument();
+    expect(screen.getByText("Pages read")).toBeInTheDocument();
+    expect(screen.getByText("Currently reading")).toBeInTheDocument();
+    expect(screen.getByText("Recent sessions")).toBeInTheDocument();
+    expect(screen.getByText("More reading insights")).toBeInTheDocument();
+    expect(screen.queryByText("Longer-term patterns and all-time leaders.")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Device import status").closest('[data-slot="card"]')).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Piranesi, Susanna Clarke, 40%, 1h 30m" }));
+    expect(await screen.findByRole("dialog", { name: "Piranesi" })).toBeInTheDocument();
+  });
+
+  it("does not present finished or abandoned books as currently reading", async () => {
+    const finishedBook = {
+      ...populatedDashboard.books[0],
+      status: "complete",
+      progress: 100,
+      percent_finished: 1,
+    };
+    const abandonedBook = {
+      ...populatedDashboard.books[1],
+      status: "abandoned",
+      progress: 25,
+      percent_finished: 0.25,
+    };
+    const nonReadingDashboard = {
+      ...populatedDashboard,
+      books: [finishedBook, abandonedBook],
+      recent_books: [finishedBook, abandonedBook],
+    };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return nonReadingDashboard;
+    });
+
+    render(<App />);
+
+    expect(await screen.findByText("No book in progress.")).toBeInTheDocument();
+    const currentBook = screen.getByLabelText("Current book");
+    const recentlyRead = screen.getByLabelText("Recently read books");
+    expect(within(currentBook).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(recentlyRead).getByRole("button", { name: /Piranesi/ })).toBeInTheDocument();
+    expect(within(recentlyRead).getByRole("button", { name: /A Wizard of Earthsea/ })).toBeInTheDocument();
+  });
+
   it("renders daily chart bars through Recharts", async () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       bottom: 0,
@@ -1088,7 +1165,7 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText("Recent books");
-    const dashboardItem = screen.getByRole("link", { name: /Dashboard/i });
+    const dashboardItem = screen.getByRole("link", { name: /Overview/i });
     const booksItem = screen.getByRole("link", { name: /^Books$/i });
     expect(dashboardItem).toHaveAttribute("data-active", "true");
     expect(dashboardItem).toHaveAttribute("aria-current", "page");
@@ -1483,7 +1560,7 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
     await userEvent.click(screen.getByRole("button", { name: /Refresh now/i }));
 
-    await userEvent.click(screen.getByRole("link", { name: /Dashboard/i }));
+    await userEvent.click(screen.getByRole("link", { name: /Overview/i }));
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
     const deviceBanner = within(screen.getByLabelText("Device import status"));
     expect(deviceBanner.getByText("Viewing")).toBeInTheDocument();
@@ -1613,7 +1690,7 @@ describe("App", () => {
     await userEvent.click(saveButton!);
 
     await waitFor(() => expect(screen.queryByLabelText("Label for Travel Kobo")).not.toBeInTheDocument());
-    await userEvent.click(screen.getByRole("link", { name: /Dashboard/i }));
+    await userEvent.click(screen.getByRole("link", { name: /Overview/i }));
     expect((await screen.findAllByText("2h 00m")).length).toBeGreaterThan(0);
     expect(dashboardRequests).toContain("/api/dashboard?snapshot_id=latest&device_id=all");
   });
@@ -1807,12 +1884,10 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByText("Recent books");
-    const readingSessionsCard = screen.getByText("Reading sessions").closest('[data-slot="card"]');
+    const readingSessionsCard = screen.getByText("Recent sessions").closest('[data-slot="card"]');
     expect(readingSessionsCard).toBeInTheDocument();
     if (!(readingSessionsCard instanceof HTMLElement)) throw new Error("Reading sessions card was not found");
-    const columnsButton = within(readingSessionsCard).getByRole("button", { name: "Columns" });
-    expect(columnsButton.parentElement?.parentElement).toHaveClass("pr-4");
-    expect(columnsButton.parentElement?.parentElement).not.toHaveClass("sm:pr-0");
+    expect(within(readingSessionsCard).queryByRole("button", { name: "Columns" })).not.toBeInTheDocument();
     const devicePill = screen.getByText("Primary Kobo");
     expect(devicePill).toHaveClass("device-pill");
     expect(devicePill).toHaveStyle({ "--device-color": "var(--device-chart-3)" });
