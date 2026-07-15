@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 dev = "backend.app.dev:main"
+prod = "backend.app.prod:main"
 
 [build-system]
 requires = ["setuptools>=80.0.0"]
