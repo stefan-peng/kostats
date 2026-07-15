@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import App from "../src/App";
+import App, { isTopStackedBarSegment, isVisibleStackedBarSegment } from "../src/App";
 import { filterZeroTooltipPayload } from "../src/components/ui/chart";
 
 const emptyDashboard = {
@@ -435,6 +435,21 @@ async function selectRadixOption(label: string, option: string) {
 }
 
 describe("App", () => {
+  it("rounds the highest non-zero segment of a stacked bar", () => {
+    const stackKeys = ["primary-kobo", "travel-kobo"];
+
+    expect(isTopStackedBarSegment({ "primary-kobo": 30, "travel-kobo": 0 }, "primary-kobo", stackKeys, 30)).toBe(true);
+    expect(isTopStackedBarSegment({ "primary-kobo": 30, "travel-kobo": 15 }, "primary-kobo", stackKeys, 30)).toBe(false);
+    expect(isTopStackedBarSegment({ "primary-kobo": 30, "travel-kobo": 15 }, "travel-kobo", stackKeys, 15)).toBe(true);
+  });
+
+  it("hides stacked segments that are too small to render rounded corners", () => {
+    const payload = { "primary-kobo": 30, "travel-kobo": 1 };
+
+    expect(isVisibleStackedBarSegment(payload, "travel-kobo", 2)).toBe(false);
+    expect(isTopStackedBarSegment(payload, "primary-kobo", ["primary-kobo", "travel-kobo"], 60)).toBe(true);
+  });
+
   it("omits zero-minute devices from bar chart tooltips", () => {
     expect(filterZeroTooltipPayload([
       { name: "active", value: 30 },

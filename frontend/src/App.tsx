@@ -24,8 +24,10 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Rectangle,
   XAxis,
   YAxis,
+  type BarShapeProps,
 } from "recharts";
 import { ThemeProvider } from "next-themes";
 import {
@@ -398,6 +400,52 @@ function deviceColorStyle(deviceId: string): CSSProperties {
   return { "--device-color": deviceColor(deviceId) } as CSSProperties;
 }
 
+const STACKED_BAR_RADIUS = 4;
+const MIN_STACKED_BAR_HEIGHT = STACKED_BAR_RADIUS * 2;
+
+export function isVisibleStackedBarSegment(
+  payload: Record<string, string | number> | undefined,
+  dataKey: string | number | undefined,
+  height: number,
+) {
+  if (dataKey === undefined || height < MIN_STACKED_BAR_HEIGHT) return false;
+  return Number(payload?.[String(dataKey)] ?? 0) > 0;
+}
+
+export function isTopStackedBarSegment(
+  payload: Record<string, string | number> | undefined,
+  dataKey: string | number | undefined,
+  stackKeys: readonly string[],
+  height: number,
+) {
+  const key = dataKey === undefined ? undefined : String(dataKey);
+  const stackIndex = key === undefined ? -1 : stackKeys.indexOf(key);
+  if (stackIndex < 0 || !isVisibleStackedBarSegment(payload, dataKey, height)) return false;
+
+  const value = Number(payload?.[key!] ?? 0);
+  const pixelsPerUnit = height / value;
+  return stackKeys.slice(stackIndex + 1).every((stackKey) => {
+    const higherValue = Number(payload?.[stackKey] ?? 0);
+    return higherValue <= 0 || higherValue * pixelsPerUnit < MIN_STACKED_BAR_HEIGHT;
+  });
+}
+
+function stackedBarShape(stackKeys: readonly string[]) {
+  return (props: BarShapeProps & { dataKey?: string | number }) => {
+    const { dataKey, payload, ...rectangleProps } = props;
+    if (!isVisibleStackedBarSegment(payload, dataKey, props.height)) return null;
+
+    return (
+      <Rectangle
+        {...rectangleProps}
+        radius={isTopStackedBarSegment(payload, dataKey, stackKeys, props.height)
+          ? [STACKED_BAR_RADIUS, STACKED_BAR_RADIUS, 0, 0]
+          : 0}
+      />
+    );
+  };
+}
+
 function DevicePill({ id, label }: { id: string; label: string }) {
   return <Badge className="device-pill" style={deviceColorStyle(id)} variant="outline">{label}</Badge>;
 }
@@ -568,6 +616,8 @@ function BookActivityChart({
     activityDevices.map((device) => [device.id, { label: device.label, color: deviceColor(device.id) }]),
   ) satisfies ChartConfig;
   const splitByDevice = activityDevices.length > 0;
+  const stackKeys = activityDevices.map((device) => device.id);
+  const shape = stackedBarShape(stackKeys);
   return (
     <ChartContainer config={splitByDevice ? config : chartConfig} className="h-56 w-full">
       <BarChart accessibilityLayer data={data} margin={{ left: 12, right: 32, top: 8, bottom: 8 }}>
@@ -593,14 +643,14 @@ function BookActivityChart({
             />
           }
         />
-        {splitByDevice ? activityDevices.map((device, index) => (
+        {splitByDevice ? activityDevices.map((device) => (
           <Bar
             key={device.id}
             dataKey={device.id}
             stackId="device"
             fill={deviceColor(device.id)}
             isAnimationActive={false}
-            radius={index === activityDevices.length - 1 ? [4, 4, 0, 0] : 0}
+            shape={shape}
           />
         )) : <Bar dataKey="minutes" barSize={16} fill="var(--color-minutes)" isAnimationActive={false} radius={4} />}
       </BarChart>
@@ -1141,6 +1191,8 @@ function DeviceStackedBarChart({
   const formatValue = unit === "minutes"
     ? (value: number) => formatDurationLabel(value * 60)
     : (value: number) => formatDurationLabel(value * 3600);
+  const stackKeys = devices.map((device) => device.id);
+  const shape = stackedBarShape(stackKeys);
 
   return (
     <Card>
@@ -1170,14 +1222,14 @@ function DeviceStackedBarChart({
                   />
                 }
               />
-              {devices.map((device, index) => (
+              {devices.map((device) => (
                 <Bar
                   key={device.id}
                   dataKey={device.id}
                   stackId="device"
                   fill={deviceColor(device.id)}
                   isAnimationActive={false}
-                  radius={index === devices.length - 1 ? [4, 4, 0, 0] : 0}
+                  shape={shape}
                 />
               ))}
             </BarChart>
