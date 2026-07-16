@@ -16,6 +16,7 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
+  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
@@ -103,7 +104,6 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -183,10 +183,7 @@ type ReadingDateFilter = { date: string; bookIds: string[] };
 type DeviceFilter = "all" | string;
 
 const views = new Set<View>(["dashboard", "snapshots", "backups", "books", "calendar", "export", "settings"]);
-const tableViewportSideInset = 16;
-const tableViewportBottomInset = 37;
-const tableMinimumHeight = 240;
-const recentBooksTableMinimumHeight = 420;
+const tablePageSize = 20;
 const deviceStatusPollMs = 15_000;
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const supportedBackupFormatVersion = 2;
@@ -427,6 +424,76 @@ function ResizableDataTable<TData>({ table, emptyMessage }: { table: TanStackTab
   );
 }
 
+function PaginatedTable<TData>({
+  ariaLabel,
+  table,
+  emptyMessage,
+}: {
+  ariaLabel: string;
+  table: TanStackTable<TData>;
+  emptyMessage: string;
+}) {
+  const regionRef = useRef<HTMLDivElement>(null);
+  const rowCount = table.getPrePaginationRowModel().rows.length;
+  const { pageIndex, pageSize } = table.getState().pagination;
+  const pageCount = table.getPageCount();
+  const firstRow = rowCount === 0 ? 0 : pageIndex * pageSize + 1;
+  const lastRow = Math.min((pageIndex + 1) * pageSize, rowCount);
+
+  function changePage(direction: "previous" | "next") {
+    if (direction === "previous") table.previousPage();
+    else table.nextPage();
+    regionRef.current?.scrollIntoView({ block: "start" });
+  }
+
+  return (
+    <div className="min-w-0">
+      <div
+        aria-label={ariaLabel}
+        className={cn(
+          "min-w-0 overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable] [&_[data-slot=table-container]]:min-w-0 [&_[data-slot=table-container]]:!overflow-visible",
+          pageCount <= 1 && "rounded-b-xl",
+        )}
+        ref={regionRef}
+        role="region"
+        tabIndex={0}
+      >
+        <ResizableDataTable table={table} emptyMessage={emptyMessage} />
+      </div>
+      {pageCount > 1 ? (
+        <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <p className="text-sm text-muted-foreground">
+            {firstRow.toLocaleString()}–{lastRow.toLocaleString()} of {rowCount.toLocaleString()}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              aria-label="Previous page"
+              disabled={!table.getCanPreviousPage()}
+              onClick={() => changePage("previous")}
+              size="sm"
+              variant="outline"
+            >
+              Previous
+            </Button>
+            <span aria-live="polite" className="text-sm text-muted-foreground">
+              Page {pageIndex + 1} of {pageCount}
+            </span>
+            <Button
+              aria-label="Next page"
+              disabled={!table.getCanNextPage()}
+              onClick={() => changePage("next")}
+              size="sm"
+              variant="outline"
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const deviceChartColors = [
   "var(--device-chart-1)",
   "var(--device-chart-2)",
@@ -574,10 +641,12 @@ function estimateDescription(book: BookStats) {
 
 function SessionTable({
   sessions,
+  ariaLabel = "Reading sessions table",
   showBooks = true,
   showColumnPicker = true,
 }: {
   sessions: ReadingSession[];
+  ariaLabel?: string;
   showBooks?: boolean;
   showColumnPicker?: boolean;
 }) {
@@ -639,6 +708,8 @@ function SessionTable({
     onColumnVisibilityChange: setColumnVisibility,
     onColumnSizingChange: setColumnSizing,
     getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: { pagination: { pageIndex: 0, pageSize: tablePageSize } },
     columnResizeMode: "onChange",
   });
   return (
@@ -646,7 +717,7 @@ function SessionTable({
       {showColumnPicker ? (
         <div className="flex justify-end pr-4"><div className="w-32"><TableColumnPicker table={table} /></div></div>
       ) : null}
-      <ResizableDataTable table={table} emptyMessage="No sessions yet." />
+      <PaginatedTable ariaLabel={ariaLabel} table={table} emptyMessage="No sessions yet." />
     </div>
   );
 }
@@ -1347,113 +1418,6 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
   );
 }
 
-function ViewportTableScrollArea({
-  ariaLabel,
-  children,
-  constrainToViewport = true,
-  minimumHeight = tableMinimumHeight,
-}: {
-  ariaLabel: string;
-  children: ReactNode;
-  constrainToViewport?: boolean;
-  minimumHeight?: number;
-}) {
-  const contentRef = useRef<HTMLDivElement>(null);
-  const tableContentRef = useRef<HTMLDivElement>(null);
-  const [maxHeight, setMaxHeight] = useState<number>();
-  const [viewportHeight, setViewportHeight] = useState<number>();
-
-  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const content = event.currentTarget;
-    const pageStep = Math.max(40, content.clientHeight - 40);
-    const scrollSteps: Partial<Record<string, number>> = {
-      ArrowDown: 40,
-      ArrowUp: -40,
-      PageDown: pageStep,
-      PageUp: -pageStep,
-    };
-
-    if (event.key === "Home") {
-      content.scrollTop = 0;
-    } else if (event.key === "End") {
-      content.scrollTop = content.scrollHeight;
-    } else if (scrollSteps[event.key] != null) {
-      content.scrollTop += scrollSteps[event.key] ?? 0;
-    } else {
-      return;
-    }
-    event.preventDefault();
-  }
-
-  useLayoutEffect(() => {
-    if (!constrainToViewport) {
-      setMaxHeight(undefined);
-      setViewportHeight(undefined);
-      return;
-    }
-
-    const content = contentRef.current;
-    if (!content) return;
-
-    const updateMaxHeight = () => {
-      const documentTop = content.getBoundingClientRect().top + window.scrollY;
-      const availableHeight =
-        window.innerHeight - Math.max(documentTop, tableViewportSideInset) - tableViewportBottomInset;
-      const viewportCap = Math.max(0, window.innerHeight - tableViewportSideInset - tableViewportBottomInset);
-      setMaxHeight(Math.min(Math.max(minimumHeight, availableHeight), viewportCap));
-    };
-
-    updateMaxHeight();
-    window.addEventListener("resize", updateMaxHeight);
-
-    return () => {
-      window.removeEventListener("resize", updateMaxHeight);
-    };
-  }, [constrainToViewport, minimumHeight]);
-
-  useLayoutEffect(() => {
-    if (!constrainToViewport || maxHeight == null) {
-      setViewportHeight(undefined);
-      return;
-    }
-
-    const tableContent = tableContentRef.current;
-    if (!tableContent) return;
-
-    const updateViewportHeight = () => {
-      const contentHeight = tableContent.scrollHeight;
-      if (contentHeight > 0) setViewportHeight(Math.min(contentHeight, maxHeight));
-    };
-
-    updateViewportHeight();
-    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateViewportHeight);
-    resizeObserver?.observe(tableContent);
-    const mutationObserver = new MutationObserver(updateViewportHeight);
-    mutationObserver.observe(tableContent, { childList: true, subtree: true });
-
-    return () => {
-      resizeObserver?.disconnect();
-      mutationObserver.disconnect();
-    };
-  }, [constrainToViewport, maxHeight]);
-
-  return (
-    <ScrollArea
-      aria-label={ariaLabel}
-      className="min-w-0 overflow-hidden rounded-b-xl overscroll-contain [scrollbar-gutter:stable] [&_[data-slot=table-container]]:min-w-0 [&_[data-slot=table-container]]:!overflow-visible [&_thead]:sticky [&_thead]:top-0 [&_thead]:z-10 [&_thead]:bg-card"
-      onKeyDown={handleKeyDown}
-      ref={contentRef}
-      role="region"
-      style={maxHeight == null ? undefined : { height: viewportHeight ?? maxHeight }}
-      tabIndex={0}
-      type="auto"
-    >
-      <div ref={tableContentRef}>{children}</div>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
-  );
-}
-
 function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]; onSelectBook: (book: BookStats) => void }) {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
@@ -1536,6 +1500,8 @@ function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]
     onColumnVisibilityChange: setColumnVisibility,
     onColumnSizingChange: setColumnSizing,
     getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: { pagination: { pageIndex: 0, pageSize: tablePageSize } },
     columnResizeMode: "onChange",
   });
 
@@ -1546,13 +1512,7 @@ function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]
         <CardAction className="w-32"><TableColumnPicker table={table} /></CardAction>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <ViewportTableScrollArea
-          ariaLabel="Recent books table"
-          constrainToViewport={false}
-          minimumHeight={recentBooksTableMinimumHeight}
-        >
-          <ResizableDataTable table={table} emptyMessage="No books yet." />
-        </ViewportTableScrollArea>
+        <PaginatedTable ariaLabel="Recent books table" table={table} emptyMessage="No books yet." />
       </CardContent>
     </Card>
   );
@@ -1606,9 +1566,7 @@ function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOp
                 </CardHeader>
                 <CardContent className="px-0 pb-0">
                   {recentSessions.length ? (
-                    <ViewportTableScrollArea ariaLabel="Book reading sessions" constrainToViewport={false} minimumHeight={220}>
-                      <SessionTable sessions={recentSessions} showBooks={false} />
-                    </ViewportTableScrollArea>
+                    <SessionTable ariaLabel="Book reading sessions" sessions={recentSessions} showBooks={false} />
                   ) : (
                     <Empty className="border-x">
                       <EmptyHeader>
@@ -1705,9 +1663,7 @@ function ReadingSessionsCard({ sessions }: { sessions: Dashboard["insights"]["se
         </CardAction>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <ViewportTableScrollArea ariaLabel="Recent reading sessions" constrainToViewport={false} minimumHeight={220}>
-          <SessionTable sessions={recent} showColumnPicker={false} />
-        </ViewportTableScrollArea>
+        <SessionTable ariaLabel="Recent reading sessions" sessions={recent} showColumnPicker={false} />
       </CardContent>
     </Card>
   );
@@ -1893,7 +1849,9 @@ function BooksView({
     },
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
+    initialState: { pagination: { pageIndex: 0, pageSize: tablePageSize } },
     columnResizeMode: "onChange",
   });
 
@@ -1979,9 +1937,7 @@ function BooksView({
         </FieldGroup>
       </CardContent>
       <CardContent className="px-0 pb-0">
-        <ViewportTableScrollArea ariaLabel="Books table">
-          <ResizableDataTable table={table} emptyMessage="No books match the current filters." />
-        </ViewportTableScrollArea>
+        <PaginatedTable ariaLabel="Books table" table={table} emptyMessage="No books match the current filters." />
       </CardContent>
     </Card>
     <BookDetailDialog book={selectedBook} onOpenChange={(open) => !open && setSelectedBook(null)} />
@@ -2172,6 +2128,8 @@ function SnapshotsView({
     onColumnVisibilityChange: setColumnVisibility,
     onColumnSizingChange: setColumnSizing,
     getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    initialState: { pagination: { pageIndex: 0, pageSize: tablePageSize } },
     columnResizeMode: "onChange",
   });
 
@@ -2182,9 +2140,7 @@ function SnapshotsView({
         <CardAction className="w-32"><TableColumnPicker table={table} /></CardAction>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <ViewportTableScrollArea ariaLabel="Snapshots table">
-          <ResizableDataTable table={table} emptyMessage="No snapshots have been imported yet." />
-        </ViewportTableScrollArea>
+        <PaginatedTable ariaLabel="Snapshots table" table={table} emptyMessage="No snapshots have been imported yet." />
       </CardContent>
     </Card>
   );

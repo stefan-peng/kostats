@@ -1344,24 +1344,18 @@ describe("App", () => {
 
     render(<App />);
 
-    const expectedTableHeight = `${window.innerHeight - 53}px`;
     await screen.findByRole("table");
     const recentRegion = screen.getByRole("region", { name: "Recent books table" });
-    expect(recentRegion).not.toHaveStyle({ height: expectedTableHeight });
+    expect(recentRegion).toHaveClass("overflow-x-auto");
     expect(screen.getByRole("region", { name: "Recent books table" })).toHaveAttribute("tabindex", "0");
 
     await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
     expect(screen.getAllByText("Books").length).toBeGreaterThan(1);
     const booksTableRegion = screen.getByRole("region", { name: "Books table" });
-    expect(booksTableRegion).toHaveStyle({ height: expectedTableHeight });
-    expect(booksTableRegion).toHaveClass("overflow-hidden");
+    expect(booksTableRegion).not.toHaveAttribute("style");
+    expect(booksTableRegion).toHaveClass("overflow-x-auto");
+    expect(booksTableRegion).not.toHaveClass("overflow-y-auto");
     expect(booksTableRegion).toHaveAttribute("tabindex", "0");
-    Object.defineProperty(booksTableRegion, "clientHeight", { configurable: true, value: 400 });
-    Object.defineProperty(booksTableRegion, "scrollHeight", { configurable: true, value: 1_200 });
-    fireEvent.keyDown(booksTableRegion, { key: "PageDown" });
-    expect(booksTableRegion.scrollTop).toBe(360);
-    fireEvent.keyDown(booksTableRegion, { key: "Home" });
-    expect(booksTableRegion.scrollTop).toBe(0);
     expect(screen.getByText("3 of 3 books")).toBeInTheDocument();
     expect(screen.getByText(/3h 40m/)).toBeInTheDocument();
     expect(screen.getByText("A Wizard of Earthsea")).toBeInTheDocument();
@@ -1449,7 +1443,7 @@ describe("App", () => {
     expect(within(rows[1]).getByText("Notes on a Small Planet")).toBeInTheDocument();
   });
 
-  it("keeps recent books uncapped so its horizontal scrollbar stays at the table bottom", async () => {
+  it("keeps the horizontal scrollbar at the natural bottom of the recent-books table", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
         return {
@@ -1502,6 +1496,52 @@ describe("App", () => {
     act(() => window.dispatchEvent(new Event("resize")));
 
     expect(tableRegion).not.toHaveStyle({ maxHeight: "147px" });
+  });
+
+  it("paginates long tables outside the horizontal scroll region and resets after filtering", async () => {
+    const books = Array.from({ length: 21 }, (_, index) => ({
+      ...populatedDashboard.books[0],
+      id: `book-${index + 1}`,
+      title: `Book ${String(index + 1).padStart(3, "0")}`,
+      last_open: new Date(Date.UTC(2026, 4, 31 - index)).toISOString(),
+      source_book_ids: [`book-${index + 1}`],
+      source_md5s: [`book-${index + 1}-md5`],
+      cover_url: null,
+      merged_count: 1,
+    }));
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "/Volumes/KOBOeReader",
+          mounted: false,
+          database_found: false,
+          selected_path: null,
+          permission_error: null,
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return { ...populatedDashboard, books };
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
+
+    const tableRegion = screen.getByRole("region", { name: "Books table" });
+    expect(within(tableRegion).getAllByRole("row")).toHaveLength(21);
+    expect(screen.getByText("1–20 of 21")).toBeInTheDocument();
+    expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
+    expect(tableRegion.nextElementSibling).toContainElement(screen.getByText("Page 1 of 2"));
+    expect(screen.queryByText("Book 021")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("Book 021")).toBeInTheDocument();
+    expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+    expect(tableRegion.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+
+    await userEvent.type(screen.getByLabelText("Search"), "Book 001");
+    expect(screen.getByText("Book 001")).toBeInTheDocument();
+    expect(screen.queryByText(/Page \d of \d/)).not.toBeInTheDocument();
   });
 
   it("keeps sparse page panels from stretching to fill the viewport", async () => {
