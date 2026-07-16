@@ -7,10 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .backups import RecoveryBackupStore
+from .covers import cover_url_for_md5s, load_cover_manifest, resolve_cover_asset
 from .devices import DeviceRegistry, normalized_label
 from .device import auto_import_from_kobo, device_status, import_from_kobo
 from .errors import BackupError, ImportError, UnsupportedSchemaError
@@ -79,6 +81,15 @@ def dashboard_for_snapshot(snapshot: SnapshotMeta, *, include_all_sessions: bool
         current_local_date(),
         include_all_sessions,
     )
+
+
+def with_cover_urls(dashboard: dict) -> dict:
+    root = store().root
+    manifest = load_cover_manifest(root)
+    for collection in (dashboard.get("books", []), dashboard.get("recent_books", [])):
+        for book in collection:
+            book["cover_url"] = cover_url_for_md5s(root, book.get("source_md5s", []), manifest=manifest)
+    return dashboard
 
 
 def known_device_rows() -> list[dict]:
@@ -321,7 +332,7 @@ def post_import_kobo(request: DeviceAssignmentRequest | None = None) -> dict:
     try:
         result = import_from_kobo(store(), device=resolve_assigned_device(request, source="kobo"))
         snapshot = SnapshotMeta(**result["snapshot"])
-        result["dashboard"] = build_dashboard(Path(snapshot.path), snapshot)
+        result["dashboard"] = with_cover_urls(build_dashboard(Path(snapshot.path), snapshot))
         return result
     except ImportError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -335,7 +346,7 @@ def post_auto_import_kobo() -> dict:
         result = auto_import_from_kobo(store())
         if result["imported"] and result["snapshot"]:
             snapshot = SnapshotMeta(**result["snapshot"])
-            result["dashboard"] = build_dashboard(Path(snapshot.path), snapshot)
+            result["dashboard"] = with_cover_urls(build_dashboard(Path(snapshot.path), snapshot))
         return result
     except ImportError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -478,7 +489,7 @@ def get_dashboard(snapshot_id: str = "latest", device_id: str = "all") -> dict:
                     raise HTTPException(status_code=404, detail="Snapshot file is missing") from exc
                 except UnsupportedSchemaError as exc:
                     raise HTTPException(status_code=422, detail=str(exc)) from exc
-                return aggregate_dashboards(dashboards, snapshots=snapshots)
+                return with_cover_urls(aggregate_dashboards(dashboards, snapshots=snapshots))
             snapshot = snapshots[0] if snapshots else None
         else:
             snapshot_rows = store().list_snapshots()
@@ -491,15 +502,30 @@ def get_dashboard(snapshot_id: str = "latest", device_id: str = "all") -> dict:
             except UnsupportedSchemaError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             if not dashboards:
-                return empty_dashboard()
-            return aggregate_dashboards(dashboards, snapshots=snapshots)
+                return with_cover_urls(empty_dashboard())
+            return with_cover_urls(aggregate_dashboards(dashboards, snapshots=snapshots))
     else:
         snapshot = store().resolve(snapshot_id)
     if snapshot is None:
-        return empty_dashboard()
+        return with_cover_urls(empty_dashboard())
     try:
-        return dashboard_for_snapshot(snapshot)
+        return with_cover_urls(dashboard_for_snapshot(snapshot))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Snapshot file is missing: {snapshot.id}") from exc
     except UnsupportedSchemaError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/covers/{asset_id}")
+def get_cover(asset_id: str) -> FileResponse:
+    path = resolve_cover_asset(store().root, asset_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Cover not found")
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": f'"{asset_id}"',
+        },
+    )

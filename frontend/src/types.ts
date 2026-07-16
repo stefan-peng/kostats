@@ -148,6 +148,7 @@ export type BookStats = {
   metadata_available: boolean;
   source_book_ids: string[];
   source_md5s: string[];
+  cover_url: string | null;
   merged_count: number;
   recent_sessions: ReadingSession[];
   recent_activity: RecentActivity[];

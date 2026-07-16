@@ -189,6 +189,51 @@ const recentBooksTableMinimumHeight = 420;
 const deviceStatusPollMs = 15_000;
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+function BookCover({
+  book,
+  className,
+  eager = false,
+}: {
+  book: Pick<BookStats, "title" | "cover_url">;
+  className?: string;
+  eager?: boolean;
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showImage = book.cover_url != null && failedUrl !== book.cover_url;
+  return (
+    <span
+      aria-label={showImage ? undefined : `No cover available for ${book.title}`}
+      className={cn(
+        "flex aspect-[2/3] items-center justify-center overflow-hidden rounded-sm border bg-muted text-muted-foreground",
+        className,
+      )}
+      role={showImage ? undefined : "img"}
+    >
+      {showImage ? (
+        <img
+          alt={`Cover of ${book.title}`}
+          className="size-full object-cover"
+          decoding="async"
+          loading={eager ? "eager" : "lazy"}
+          onError={() => setFailedUrl(book.cover_url)}
+          src={book.cover_url ?? undefined}
+        />
+      ) : (
+        <BookOpen aria-hidden="true" />
+      )}
+    </span>
+  );
+}
+
+function BookTitle({ book }: { book: BookStats }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <BookCover book={book} className="w-8 shrink-0" />
+      <span className="whitespace-normal font-medium" title={book.title}>{book.title}</span>
+    </span>
+  );
+}
+
 const emptyDashboard: Dashboard = {
   has_data: false,
   snapshot: null,
@@ -1429,7 +1474,7 @@ function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]
       {
         accessorKey: "title",
         header: "Title",
-        cell: ({ row }) => <span className="font-medium whitespace-normal" title={row.original.title}>{row.original.title}</span>,
+        cell: ({ row }) => <BookTitle book={row.original} />,
         enableHiding: false,
         size: 300,
         minSize: 180,
@@ -1532,10 +1577,13 @@ function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOp
       <DialogContent className="max-h-[min(90vh,780px)] overflow-y-auto sm:max-w-5xl">
         {book ? (
           <>
-            <DialogHeader>
-              <DialogTitle>{book.title}</DialogTitle>
-              <DialogDescription>{book.authors}</DialogDescription>
-            </DialogHeader>
+            <div className="flex items-start gap-4">
+              <BookCover book={book} className="w-20 shrink-0" eager />
+              <DialogHeader className="min-w-0 flex-1 text-left">
+                <DialogTitle>{book.title}</DialogTitle>
+                <DialogDescription>{book.authors}</DialogDescription>
+              </DialogHeader>
+            </div>
             <div className="flex flex-col gap-3 rounded-lg border p-3 sm:grid sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] sm:items-center">
               <Badge className="w-fit" variant={statusBadgeVariant(book)}>{formatStatus(book)}</Badge>
               <Progress value={book.progress ?? 0} />
@@ -1614,7 +1662,8 @@ function ReadingProgressPanel({
         onClick={() => onSelectBook(book)}
         aria-label={`${book.title}, ${book.authors}, ${formatProgress(book)}, ${book.time_label}`}
       >
-        <span className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-4">
+        <span className="grid w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_4.5rem] items-center gap-3">
+          <BookCover book={book} className="w-10" />
           <span className="min-w-0">
             <span className="block line-clamp-2 font-heading text-base leading-tight whitespace-normal" title={book.title}>
               {book.title}
@@ -1706,11 +1755,12 @@ function BooksView({
           <Button
             variant="ghost"
             size="sm"
+            aria-label={row.original.title}
             className="h-auto justify-start p-0 text-left whitespace-normal"
             title={row.original.title}
             onClick={() => setSelectedBook(row.original)}
           >
-            {row.original.title}
+            <BookTitle book={row.original} />
           </Button>
         ),
         enableHiding: false,

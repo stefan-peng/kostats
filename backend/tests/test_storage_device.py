@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from backend.app import config
 from backend.app.devices import DeviceRegistry
@@ -66,6 +69,17 @@ def write_sidecar(volume: Path, *, status: str, percent: float = 0.5) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def write_cover_epub(volume: Path) -> None:
+    image = BytesIO()
+    Image.new("RGB", (20, 30), "red").save(image, format="PNG")
+    path = volume / "books/Test Book.epub"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="content.opf" /></rootfiles></container>')
+        archive.writestr("content.opf", '<package><manifest><item id="cover" href="cover.png" properties="cover-image" /></manifest></package>')
+        archive.writestr("cover.png", image.getvalue())
 
 
 def test_snapshot_store_imports_timestamped_copy(tmp_path: Path) -> None:
@@ -412,6 +426,54 @@ def test_auto_import_from_kobo_detects_sidecar_only_changes(tmp_path: Path) -> N
     assert third["imported"] is True
     assert third["snapshot"]["sidecar_path"]
     assert len(store.list_snapshots()) == 2
+
+
+def test_manual_and_auto_import_populate_cover_cache(tmp_path: Path) -> None:
+    for name, importer in (("manual", import_from_kobo), ("auto", auto_import_from_kobo)):
+        volume = tmp_path / name / "KOBOeReader"
+        db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+        create_db(db_path)
+        add_reading_row(db_path, book_id=1, title="Test Book", duration=1200)
+        write_sidecar(volume, status="reading")
+        write_cover_epub(volume)
+        store = SnapshotStore(tmp_path / name / "data")
+        if name == "auto":
+            register_auto_import_device(store, volume)
+
+        importer(store, volume)
+
+        manifest = (store.root / "covers/manifest.json").read_text(encoding="utf-8")
+        assert "test-md5" in manifest
+
+
+def test_unchanged_auto_import_repairs_cover_without_snapshot(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    add_reading_row(db_path, book_id=1, title="Test Book", duration=1200)
+    write_sidecar(volume, status="reading")
+    store = SnapshotStore(tmp_path / "data")
+    register_auto_import_device(store, volume)
+    first = auto_import_from_kobo(store, volume)
+    write_cover_epub(volume)
+
+    second = auto_import_from_kobo(store, volume)
+
+    assert second["reason"] == "unchanged"
+    assert second["snapshot"]["id"] == first["snapshot"]["id"]
+    assert len(store.list_snapshots()) == 1
+    assert (store.root / "covers/manifest.json").exists()
+
+
+def test_cover_failure_never_fails_statistics_import(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    monkeypatch.setattr("backend.app.device.populate_cover_cache", lambda *args: (_ for _ in ()).throw(OSError("disk")))
+
+    result = import_from_kobo(SnapshotStore(tmp_path / "data"), volume)
+
+    assert result["snapshot"]["source"] == "kobo"
 
 
 def test_auto_import_holds_device_lock_while_reading_kobo(

@@ -165,6 +165,7 @@ const populatedDashboard = {
       metadata_available: true,
       source_book_ids: ["1", "4"],
       source_md5s: ["piranesi-a", "piranesi-b"],
+      cover_url: "/api/covers/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       merged_count: 2,
       recent_sessions: [
         {
@@ -200,6 +201,7 @@ const populatedDashboard = {
       metadata_available: true,
       source_book_ids: ["2"],
       source_md5s: ["earthsea-md5"],
+      cover_url: null,
       merged_count: 1,
     },
     {
@@ -224,6 +226,7 @@ const populatedDashboard = {
       metadata_available: false,
       source_book_ids: ["3"],
       source_md5s: [],
+      cover_url: null,
       merged_count: 1,
     },
   ],
@@ -250,6 +253,7 @@ const populatedDashboard = {
       metadata_available: true,
       source_book_ids: ["1", "4"],
       source_md5s: ["piranesi-a", "piranesi-b"],
+      cover_url: "/api/covers/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       merged_count: 2,
     },
   ],
@@ -1939,13 +1943,20 @@ describe("App", () => {
 
     render(<App />);
     await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
+    const tableCover = screen.getByRole("img", { name: "Cover of Piranesi" });
+    expect(tableCover).toHaveAttribute("loading", "lazy");
     await userEvent.click(screen.getByRole("button", { name: "Piranesi" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Piranesi" });
+    const dialogCover = within(dialog).getByRole("img", { name: "Cover of Piranesi" });
+    expect(dialogCover).toHaveAttribute("loading", "eager");
     expect(within(dialog).getByText("~22h 30m left")).toBeInTheDocument();
     expect(within(dialog).getByText("11 min/page")).toBeInTheDocument();
     expect(within(dialog).getByText("Recent sessions")).toBeInTheDocument();
     expect(within(dialog).getByText("45m")).toBeInTheDocument();
+
+    fireEvent.error(dialogCover);
+    expect(within(dialog).getByRole("img", { name: "No cover available for Piranesi" })).toBeInTheDocument();
   });
 
   it("opens recent-book details from its explicit action", async () => {

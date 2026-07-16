@@ -13,6 +13,7 @@ from .config import (
     kobo_volume_is_configured,
     kobo_volume_is_default_mount_path,
 )
+from .covers import populate_cover_cache
 from .devices import LEGACY_DEVICE_ID, DeviceRegistry, detect_device_identity
 from .errors import ImportError
 from .storage import SnapshotStore, combined_content_hash, copy_sqlite_database, hash_file
@@ -114,7 +115,12 @@ def import_from_kobo(store: SnapshotStore, volume: Path | None = None, device: d
     root = Path(status["mount_path"])
     with DEVICE_LOCK:
         device = device or DeviceRegistry(store.root).ensure_for_volume(root)
-        sidecar_payload = serialize_sidecar_snapshot(build_sidecar_snapshot(root))
+        sidecar_snapshot = build_sidecar_snapshot(root)
+        try:
+            populate_cover_cache(root, sidecar_snapshot["records"], store.root)
+        except Exception:
+            pass
+        sidecar_payload = serialize_sidecar_snapshot(sidecar_snapshot)
         meta = store.import_file(
             Path(status["selected_path"]),
             source_kind="kobo",
@@ -218,7 +224,12 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
             except sqlite3.DatabaseError as exc:
                 raise ImportError(f"Selected file is not a readable SQLite database: {source}") from exc
 
-            sidecar_payload = serialize_sidecar_snapshot(build_sidecar_snapshot(Path(status["mount_path"])))
+            sidecar_snapshot = build_sidecar_snapshot(Path(status["mount_path"]))
+            try:
+                populate_cover_cache(Path(status["mount_path"]), sidecar_snapshot["records"], store.root)
+            except Exception:
+                pass
+            sidecar_payload = serialize_sidecar_snapshot(sidecar_snapshot)
             prepared_sidecars.write_bytes(sidecar_payload)
             prepared_sidecar_hash = sidecar_snapshot_hash(sidecar_payload)
             prepared_hash = combined_content_hash(hash_file(prepared), prepared_sidecar_hash)

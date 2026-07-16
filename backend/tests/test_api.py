@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import backend.app.main as main_module
 from backend.app.backups import partial_md5
+from backend.app.covers import save_cover_manifest
 from backend.app.devices import DeviceRegistry
 from backend.app.main import app
 from backend.app.sqlite_stats import build_dashboard
@@ -88,6 +89,33 @@ def test_upload_import_and_dashboard(monkeypatch, tmp_path: Path) -> None:
     dashboard = client.get("/api/dashboard").json()
     assert dashboard["books"][0]["title"] == "Kindred"
     assert dashboard["recent_books"][0]["title"] == "Kindred"
+
+
+def test_dashboard_resolves_cover_and_endpoint_has_immutable_headers(monkeypatch, tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    source = tmp_path / "statistics.sqlite3"
+    create_api_fixture(source, md5="book-md5")
+    SnapshotStore(data_root).import_file(source, source_kind="upload", source_path="statistics.sqlite3")
+    asset_id = "a" * 64
+    cover = data_root / "covers" / f"{asset_id}.webp"
+    cover.parent.mkdir(parents=True, exist_ok=True)
+    cover.write_bytes(b"webp payload")
+    save_cover_manifest(data_root, {"book-md5": asset_id})
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
+    main_module.cached_dashboard.cache_clear()
+    client = TestClient(app)
+
+    dashboard = client.get("/api/dashboard").json()
+    response = client.get(dashboard["books"][0]["cover_url"])
+
+    assert dashboard["books"][0]["cover_url"] == f"/api/covers/{asset_id}"
+    assert dashboard["recent_books"][0]["cover_url"] == f"/api/covers/{asset_id}"
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/webp"
+    assert response.headers["etag"] == f'"{asset_id}"'
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert client.get(f"/api/covers/{'b' * 64}").status_code == 404
+    assert client.get("/api/covers/not-an-asset").status_code == 404
 
 
 def test_dashboard_endpoint_reuses_cached_snapshot_summary(monkeypatch, tmp_path: Path) -> None:
