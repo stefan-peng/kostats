@@ -113,7 +113,7 @@ def main() -> int:
                 "8000",
             ],
         ),
-        ManagedProcess("frontend", [npm, "run", "dev", "--prefix", "frontend"]),
+        ManagedProcess("frontend", [npm, "run", "dev", "--prefix", "frontend", "--", "--host"]),
     ]
     stopping = False
 
