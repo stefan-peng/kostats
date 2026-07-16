@@ -714,60 +714,13 @@ describe("App", () => {
     expect(screen.getByText("Days read")).toBeInTheDocument();
     expect(screen.getByText("Books in library")).toBeInTheDocument();
     expect(screen.getByText("Pages read")).toBeInTheDocument();
-    expect(screen.getByText("Currently reading")).toBeInTheDocument();
-    expect(screen.getByTestId("dashboard-primary-insights")).toHaveClass("items-start");
-    expect(screen.getByText("Recent sessions")).toBeInTheDocument();
-    expect(screen.getByText("More reading insights")).toBeInTheDocument();
+    expect(screen.queryByText("Currently reading")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recently read")).not.toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-primary-insights")).toHaveClass("min-w-0");
+    expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "More reading insights" })).not.toBeInTheDocument();
     expect(screen.queryByText("Longer-term patterns and all-time leaders.")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Device import status").closest('[data-slot="card"]')).toBeNull();
-
-    const currentBookRow = screen.getByRole("button", { name: "Piranesi, Susanna Clarke, 40%, 1h 30m" });
-    expect(currentBookRow).toHaveClass("rounded-md", "px-3");
-    await userEvent.click(currentBookRow);
-    expect(await screen.findByRole("dialog", { name: "Piranesi" })).toBeInTheDocument();
-  });
-
-  it("does not present finished or abandoned books as currently reading", async () => {
-    const finishedBook = {
-      ...populatedDashboard.books[0],
-      status: "complete",
-      progress: 100,
-      percent_finished: 1,
-    };
-    const abandonedBook = {
-      ...populatedDashboard.books[1],
-      status: "abandoned",
-      progress: 25,
-      percent_finished: 0.25,
-    };
-    const nonReadingDashboard = {
-      ...populatedDashboard,
-      books: [finishedBook, abandonedBook],
-      recent_books: [finishedBook, abandonedBook],
-    };
-    mockFetch((url) => {
-      if (url.startsWith("/api/device/status")) {
-        return {
-          mount_path: "/Volumes/KOBOeReader",
-          mounted: false,
-          database_found: false,
-          selected_path: null,
-          permission_error: null,
-          candidates: [],
-        };
-      }
-      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
-      return nonReadingDashboard;
-    });
-
-    render(<App />);
-
-    expect(await screen.findByText("No book in progress.")).toBeInTheDocument();
-    const currentBook = screen.getByLabelText("Current book");
-    const recentlyRead = screen.getByLabelText("Recently read books");
-    expect(within(currentBook).queryByRole("button")).not.toBeInTheDocument();
-    expect(within(recentlyRead).getByRole("button", { name: /Piranesi/ })).toBeInTheDocument();
-    expect(within(recentlyRead).getByRole("button", { name: /A Wizard of Earthsea/ })).toBeInTheDocument();
   });
 
   it("renders daily chart bars through Recharts", async () => {
@@ -2105,7 +2058,7 @@ describe("App", () => {
     expect(await screen.findByRole("dialog", { name: "Piranesi" })).toBeInTheDocument();
   });
 
-  it("shows per-device session insights for the all-devices dashboard", async () => {
+  it("does not show session insights on the overview", async () => {
     const aggregateDashboard = {
       ...populatedDashboard,
       snapshot: { ...populatedDashboard.snapshot, id: "aggregate", source: "aggregate", device_id: "all" },
@@ -2133,12 +2086,6 @@ describe("App", () => {
 
     render(<App />);
     await screen.findByText("Recent books");
-    const readingSessionsCard = screen.getByText("Recent sessions").closest('[data-slot="card"]');
-    expect(readingSessionsCard).toBeInTheDocument();
-    if (!(readingSessionsCard instanceof HTMLElement)) throw new Error("Reading sessions card was not found");
-    expect(within(readingSessionsCard).queryByRole("button", { name: "Columns" })).not.toBeInTheDocument();
-    const devicePill = screen.getByText("Primary Kobo");
-    expect(devicePill).toHaveClass("device-pill");
-    expect(devicePill).toHaveStyle({ "--device-color": "var(--device-chart-3)" });
+    expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
   });
 });

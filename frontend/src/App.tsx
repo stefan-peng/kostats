@@ -1585,90 +1585,6 @@ function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOp
   );
 }
 
-function ReadingProgressPanel({
-  books,
-  recentBooks,
-  onSelectBook,
-}: {
-  books: BookStats[];
-  recentBooks: Dashboard["recent_books"];
-  onSelectBook: (book: BookStats) => void;
-}) {
-  const current =
-    recentBooks.find((book) => effectiveStatus(book) === "reading")
-    ?? books.find((book) => effectiveStatus(book) === "reading")
-    ?? null;
-  const recent = recentBooks.filter((book) => book.id !== current?.id).slice(0, 3);
-
-  function BookProgressRow({ book }: { book: BookStats }) {
-    return (
-      <Button
-        variant="ghost"
-        className="h-auto w-full min-w-0 justify-start rounded-md px-3 py-3 text-left"
-        onClick={() => onSelectBook(book)}
-        aria-label={`${book.title}, ${book.authors}, ${formatProgress(book)}, ${book.time_label}`}
-      >
-        <span className="grid w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_4.5rem] items-center gap-3">
-          <BookCover book={book} className="w-10" />
-          <span className="min-w-0">
-            <span className="block line-clamp-2 font-heading text-base leading-tight whitespace-normal" title={book.title}>
-              {book.title}
-            </span>
-            <span className="mt-1 block truncate text-xs font-normal text-muted-foreground" title={book.authors}>
-              {book.authors}
-            </span>
-          </span>
-          <span className="grid gap-1.5 text-right">
-            <span className="text-xs font-medium text-primary">{formatProgress(book)}</span>
-            <Progress value={book.progress ?? 0} aria-label={`${book.title} progress`} />
-            <span className="text-xs font-normal text-muted-foreground">{book.time_label}</span>
-          </span>
-        </span>
-      </Button>
-    );
-  }
-
-  return (
-    <Card className="min-w-0">
-      <CardHeader>
-        <CardTitle>Currently reading</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-0">
-        <div aria-label="Current book">
-          {current ? <BookProgressRow book={current} /> : <p className="py-3 text-sm text-muted-foreground">No book in progress.</p>}
-        </div>
-        <Separator />
-        <div aria-label="Recently read books">
-          <h3 className="pt-4 font-heading text-lg leading-snug font-medium tracking-[-0.01em]">Recently read</h3>
-          {recent.length ? recent.map((book) => <BookProgressRow key={book.id} book={book} />) : (
-            <p className="py-3 text-sm text-muted-foreground">No other recent books.</p>
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ReadingSessionsCard({ sessions }: { sessions: Dashboard["insights"]["sessions"] | undefined }) {
-  if (!sessions?.available) return null;
-  const recent = sessions.recent.slice(0, 5);
-  return (
-    <Card size="sm">
-      <CardHeader className="items-center">
-        <CardTitle>Recent sessions</CardTitle>
-        <CardAction className="flex flex-wrap justify-end gap-2" aria-label="Reading sessions summary">
-          <Badge variant="outline">{sessions.total.toLocaleString()} total</Badge>
-          <Badge variant="outline">{formatDurationLabel(sessions.average_active_seconds)} average</Badge>
-          <Badge variant="outline">{formatDurationLabel(sessions.longest_active_seconds)} longest</Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="px-0 pb-0">
-        <SessionTable ariaLabel="Recent reading sessions" sessions={recent} showColumnPicker={false} />
-      </CardContent>
-    </Card>
-  );
-}
-
 function BooksView({
   books,
   readingDate,
@@ -1976,7 +1892,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
 
       <section
         data-testid="dashboard-primary-insights"
-        className="grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(20rem,0.85fr)]"
+        className="grid min-w-0 gap-4"
       >
         {dashboard.charts.devices?.length && dashboard.charts.daily_by_device?.length ? (
           <DeviceStackedBarChart
@@ -1995,17 +1911,9 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
             dominant
           />
         )}
-        <ReadingProgressPanel
-          books={dashboard.books}
-          recentBooks={dashboard.recent_books}
-          onSelectBook={setSelectedBook}
-        />
       </section>
 
-      <ReadingSessionsCard sessions={dashboard.insights?.sessions} />
-
-      <section aria-labelledby="more-insights-title" className="grid gap-3 pt-2">
-        <h2 id="more-insights-title" className="font-heading text-xl">More reading insights</h2>
+      <section className="grid gap-4">
         <div className="grid gap-4 xl:grid-cols-2">
           {dashboard.charts.devices?.length && dashboard.charts.monthly_by_device?.length ? (
             <DeviceStackedBarChart
