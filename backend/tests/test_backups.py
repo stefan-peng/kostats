@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import sqlite3
 import stat
@@ -129,7 +131,7 @@ def test_backup_includes_recovery_data_and_excludes_books_and_caches(tmp_path: P
     assert "payload/koreader/settings.reader.lua" in names
     assert "payload/koreader/settings/statistics.sqlite3" in names
     assert "payload/koreader/settings/vocabulary_builder.sqlite3" in names
-    assert "payload/koreader/data/dict/custom.dict" in names
+    assert "payload/koreader/data/dict/custom.dict" not in names
     assert "payload/sidecars/Books/Author/Book.sdr/metadata.epub.lua" in names
     assert "payload/sidecars/Books/Author/Book.sdr/cover.jpg" in names
     assert "payload/extensions/plugins/kobo.koplugin/main.lua" in names
@@ -140,6 +142,61 @@ def test_backup_includes_recovery_data_and_excludes_books_and_caches(tmp_path: P
     assert backup["credentials_included"] is True
     assert stat.S_IMODE(Path(backup["archive_path"]).stat().st_mode) == 0o600
     assert store.list_backups() == [backup]
+
+
+def test_dictionary_payloads_are_content_addressed_across_backups(tmp_path: Path) -> None:
+    store, volume, first = backup_fixture(tmp_path)
+    dictionary = volume / ".adds/koreader/data/dict/custom.dict"
+    checksum = hashlib.sha256(dictionary.read_bytes()).hexdigest()
+    object_path = store.dictionary_object_path(checksum)
+
+    assert object_path.is_file()
+    first_object = object_path.read_bytes()
+    second = store.create_from_kobo(volume, source="pre-restore-safety", force=True)["backup"]
+
+    assert object_path.read_bytes() == first_object
+    assert list(store.dictionary_objects_dir.rglob("*.gz")) == [object_path]
+    for backup in (first, second):
+        with zipfile.ZipFile(backup["archive_path"]) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            item = next(item for item in manifest["payloads"] if item["category"] == "dictionaries")
+            assert item["sha256"] == checksum
+            assert item["path"] not in archive.namelist()
+
+
+def test_restore_reads_dictionary_from_content_addressed_store(tmp_path: Path) -> None:
+    store, volume, backup = backup_fixture(tmp_path)
+    dictionary = volume / ".adds/koreader/data/dict/custom.dict"
+    dictionary.unlink()
+
+    store.restore(backup["id"], confirmed=True, restore_extensions=False, volume=volume)
+
+    assert dictionary.read_bytes() == b"dictionary"
+
+
+def test_dictionary_object_path_rejects_untrusted_checksum(tmp_path: Path) -> None:
+    store = RecoveryBackupStore(tmp_path / "data")
+
+    with pytest.raises(BackupError, match="checksum"):
+        store.dictionary_object_path("../../outside")
+
+
+def test_corrupt_dictionary_deflate_stream_is_reported_and_replaced(tmp_path: Path) -> None:
+    store = RecoveryBackupStore(tmp_path / "data")
+    payload = b"dictionary"
+    checksum = hashlib.sha256(payload).hexdigest()
+    object_path = store.dictionary_object_path(checksum)
+    object_path.parent.mkdir(parents=True)
+    object_path.write_bytes(
+        b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff\x07\x00\x00\x00\x00\x00\x00\x00\x00"
+    )
+
+    with zipfile.ZipFile(tmp_path / "backup.zip", "w") as archive:
+        with pytest.raises(BackupError, match="unreadable"):
+            store.read_payload({"category": "dictionaries", "sha256": checksum}, archive)
+
+    store.store_dictionary_object(payload, checksum)
+    assert gzip.decompress(object_path.read_bytes()) == payload
 
 
 def test_backup_sqlite_payloads_are_consistent_databases(tmp_path: Path) -> None:
@@ -219,6 +276,30 @@ def test_backup_calculates_partial_md5_for_legacy_sidecar(tmp_path: Path) -> Non
     assert manifest["sidecars"][0]["partial_md5_checksum"] == partial_md5(
         volume / "Books/Author/Book.epub"
     )
+
+
+def test_backup_ignores_transient_kobo_plugin_cache_sidecars(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    volume.mkdir()
+    create_koreader_fixture(volume)
+    write_book_and_sidecar(volume)
+    cache_id = "075680f1-27da-41a8-a988-5f6a740d2f20"
+    cache_sidecar = (
+        volume
+        / f".adds/koreader/docsettings/tmp/kobo.koplugin.cache/{cache_id}.sdr/metadata.epub.lua"
+    )
+    cache_sidecar.parent.mkdir(parents=True)
+    cache_sidecar.write_text(
+        f'return {{ ["doc_path"] = "/tmp/kobo.koplugin.cache/{cache_id}" }}\n',
+        encoding="utf-8",
+    )
+
+    store = RecoveryBackupStore(tmp_path / "data")
+    backup = store.create_from_kobo(volume)["backup"]
+
+    with zipfile.ZipFile(backup["archive_path"]) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    assert all("kobo.koplugin.cache" not in item["source_path"] for item in manifest["sidecars"])
 
 
 def test_backup_keeps_legacy_history_sidecars_as_separate_records(tmp_path: Path) -> None:

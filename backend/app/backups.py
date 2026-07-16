@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
@@ -10,10 +11,11 @@ import tempfile
 import threading
 import unicodedata
 import zipfile
+import zlib
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .devices import DeviceRegistry
 from .device import DEVICE_LOCK, device_status
@@ -23,7 +25,7 @@ from .sidecars import normalize_sidecar, sidecar_candidates
 from .storage import copy_sqlite_database
 
 
-BACKUP_FORMAT_VERSION = 1
+BACKUP_FORMAT_VERSION = 2
 BOOK_EXTENSIONS = {
     ".azw",
     ".azw3",
@@ -108,6 +110,10 @@ def normalized_text(value: str | None) -> str | None:
 def device_doc_path(volume: Path, path: Path) -> str:
     relative = path.relative_to(volume).as_posix()
     return f"/mnt/onboard/{relative}"
+
+
+def is_device_doc_path(value: str | None) -> bool:
+    return bool(value and re.match(r"^/mnt/(?:onboard|sd)/", value))
 
 
 def detect_koreader_version(koreader_root: Path) -> str | None:
@@ -245,7 +251,7 @@ def sidecar_record(volume: Path, source_path: Path) -> dict[str, Any]:
             normalized["authors"] = lua_string_field(metadata_text, "authors")
     doc_path = normalized.get("doc_path")
     checksum = normalized.get("partial_md5_checksum")
-    if doc_path and not checksum:
+    if is_device_doc_path(doc_path) and not checksum:
         relative = re.sub(r"^/mnt/(?:onboard|sd)/?", "", doc_path)
         document = safe_destination(volume, relative)
         if document.is_file():
@@ -276,15 +282,49 @@ class RecoveryBackupStore:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.backups_dir = root / "backups"
+        self.dictionary_objects_dir = self.backups_dir / "dictionary-objects"
         self.index_path = self.backups_dir / "manifest.json"
         self._index_lock = threading.Lock()
 
     def ensure(self) -> None:
         self.backups_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.dictionary_objects_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
             self.backups_dir.chmod(0o700)
         except OSError:
             pass
+
+    def dictionary_object_path(self, checksum: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f]{64}", checksum):
+            raise BackupError("Dictionary object checksum is invalid.")
+        return self.dictionary_objects_dir / checksum[:2] / f"{checksum}.gz"
+
+    def store_dictionary_object(self, payload: bytes, checksum: str) -> None:
+        destination = self.dictionary_object_path(checksum)
+        if destination.is_file():
+            try:
+                existing = gzip.decompress(destination.read_bytes())
+            except (OSError, EOFError, zlib.error):
+                existing = b""
+            if sha256_bytes(existing) == checksum:
+                return
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+        try:
+            temporary.write_bytes(gzip.compress(payload, mtime=0))
+            temporary.chmod(0o600)
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def read_payload(self, item: dict[str, Any], archive: zipfile.ZipFile) -> bytes:
+        if item["category"] != "dictionaries":
+            return archive.read(item["path"])
+        checksum = item["sha256"]
+        try:
+            return gzip.decompress(self.dictionary_object_path(checksum).read_bytes())
+        except (OSError, EOFError, zlib.error) as exc:
+            raise BackupError(f"Dictionary object is unreadable: {checksum}") from exc
 
     def load_index(self) -> dict[str, Any]:
         self.ensure()
@@ -408,6 +448,8 @@ class RecoveryBackupStore:
 
         for sidecar_source in sidecar_sources(volume):
             record = sidecar_record(volume, sidecar_source)
+            if record.get("doc_path") and not is_device_doc_path(record["doc_path"]):
+                continue
             for file_path in iter_files(sidecar_source):
                 if sidecar_source.is_file():
                     archive_name = record["archive_path"]
@@ -444,7 +486,11 @@ class RecoveryBackupStore:
             with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                 for source_path, archive_name, category in sorted(payloads, key=lambda item: item[1]):
                     payload = source_path.read_bytes()
-                    archive.writestr(archive_name, payload)
+                    payload_sha256 = sha256_bytes(payload)
+                    if category == "dictionaries":
+                        self.store_dictionary_object(payload, payload_sha256)
+                    else:
+                        archive.writestr(archive_name, payload)
                     if source_path.suffix == ".lua":
                         try:
                             known_book_paths.update(
@@ -463,7 +509,7 @@ class RecoveryBackupStore:
                         {
                             "path": archive_name,
                             "size": len(payload),
-                            "sha256": sha256_bytes(payload),
+                            "sha256": payload_sha256,
                             "dedup_sha256": dedup_sha256,
                             "category": category,
                         }
@@ -546,7 +592,7 @@ class RecoveryBackupStore:
     def validate_archive(self, manifest: dict[str, Any], archive: zipfile.ZipFile) -> None:
         for item in manifest.get("payloads", []):
             try:
-                payload = archive.read(item["path"])
+                payload = self.read_payload(item, archive)
             except KeyError as exc:
                 raise BackupError(f"Backup payload is missing: {item['path']}") from exc
             if len(payload) != item["size"] or sha256_bytes(payload) != item["sha256"]:
@@ -614,6 +660,7 @@ class RecoveryBackupStore:
                     archive,
                     matches,
                     restore_extensions=restore_extensions,
+                    read_payload=self.read_payload,
                 )
                 if result["failed"]:
                     raise BackupError(
@@ -823,6 +870,7 @@ def apply_restore(
     matches: dict[str, Any],
     *,
     restore_extensions: bool,
+    read_payload: Callable[[dict[str, Any], zipfile.ZipFile], bytes],
 ) -> dict[str, Any]:
     koreader_root = volume / ".adds/koreader"
     exact_by_source = {item["source_path"]: item for item in matches["exact_matches"]}
@@ -870,7 +918,7 @@ def apply_restore(
             relative = archive_path.removeprefix("payload/koreader/")
             destination = safe_destination(koreader_root, relative)
         try:
-            payload = archive.read(archive_path)
+            payload = read_payload(item, archive)
             if destination.suffix == ".lua":
                 payload = rewrite_lua_paths(payload, replacements, unmatched)
             write_payload(destination, payload)
