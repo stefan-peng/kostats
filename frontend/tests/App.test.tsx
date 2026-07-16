@@ -321,6 +321,7 @@ const windowsAutoSnapshot = {
 
 const recoveryBackup = {
   id: "20260610T120000Z",
+  format_version: 2,
   created_at: "2026-06-10T12:00:00Z",
   source: "kobo",
   source_mount: "/Volumes/KOBOeReader",
@@ -1863,6 +1864,9 @@ describe("App", () => {
 
     const backupCard = screen.getByRole("article", { name: /Recovery backup/i });
     expect(within(backupCard).getByText("Contains credentials")).toBeInTheDocument();
+    expect(within(backupCard).getByText(/KOReader v2026\.03/)).toBeInTheDocument();
+    expect(within(backupCard).getByText("Format v2")).toBeInTheDocument();
+    expect(within(backupCard).getByText(/local backup store/)).toBeInTheDocument();
     expect(within(backupCard).getByText("sidecar files")).toBeInTheDocument();
     expect(within(backupCard).getByRole("button", { name: "Restore" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /Back up now/i }));
@@ -1888,6 +1892,77 @@ describe("App", () => {
       confirmed: true,
       restore_optional_extensions: true,
     });
+  });
+
+  it("disables import without spinning it while creating a backup", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    let releaseBackup!: () => void;
+    const backupFinished = new Promise<void>((resolve) => {
+      releaseBackup = resolve;
+    });
+
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return { imported: false, reason: "unchanged", snapshot: populatedDashboard.snapshot, device: mountedStatus };
+      }
+      if (url === "/api/backups/kobo") {
+        return backupFinished.then(() => ({ created: false, backup: recoveryBackup }));
+      }
+      if (url.startsWith("/api/backups?")) return { backups: [recoveryBackup] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("link", { name: /Backups/i }));
+
+    const importButton = screen.getByRole("button", { name: "Import from Kobo" });
+    const backupButton = screen.getByRole("button", { name: "Back up now" });
+    await userEvent.click(backupButton);
+
+    expect(importButton).toBeDisabled();
+    expect(importButton.querySelector(".animate-spin")).not.toBeInTheDocument();
+    expect(backupButton.querySelector(".animate-spin")).toBeInTheDocument();
+
+    releaseBackup();
+    await waitFor(() => expect(screen.getByText("Recovery backup created")).toBeInTheDocument());
+  });
+
+  it("supports legacy backup formats", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    const legacyBackup = { ...recoveryBackup, format_version: 1 };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        return { imported: false, reason: "unchanged", snapshot: populatedDashboard.snapshot, device: mountedStatus };
+      }
+      if (url.startsWith("/api/backups?")) return { backups: [legacyBackup] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("link", { name: /Backups/i }));
+
+    const backupCard = screen.getByRole("article", { name: /Recovery backup/i });
+    expect(within(backupCard).getByText("Format v1")).toBeInTheDocument();
+    expect(within(backupCard).getByText(/stored inside the backup archive/)).toBeInTheDocument();
+    expect(within(backupCard).getByRole("button", { name: "Restore" })).toBeEnabled();
   });
 
   it("exports selected dashboard data", async () => {

@@ -121,6 +121,29 @@ def backup_fixture(tmp_path: Path, *, mode: str = "doc") -> tuple[RecoveryBackup
     return store, volume, result["backup"]
 
 
+def make_v1_backup(store: RecoveryBackupStore, volume: Path, backup: dict) -> dict:
+    legacy_path = Path(backup["archive_path"]).with_name("legacy-v1.zip")
+    with zipfile.ZipFile(backup["archive_path"]) as source, zipfile.ZipFile(
+        legacy_path, "w", compression=zipfile.ZIP_DEFLATED
+    ) as legacy:
+        manifest = json.loads(source.read("manifest.json"))
+        manifest["format_version"] = 1
+        for item in manifest["payloads"]:
+            payload = (
+                (volume / ".adds/koreader/data/dict/custom.dict").read_bytes()
+                if item["category"] == "dictionaries"
+                else source.read(item["path"])
+            )
+            legacy.writestr(item["path"], payload)
+        for name in source.namelist():
+            if name not in {item["path"] for item in manifest["payloads"]} and name != "manifest.json":
+                legacy.writestr(name, source.read(name))
+        legacy.writestr("manifest.json", json.dumps(manifest))
+    legacy_backup = {**backup, "id": "legacy-v1", "format_version": 1, "archive_path": str(legacy_path)}
+    store.save_index({"version": 1, "backups": [legacy_backup]})
+    return legacy_backup
+
+
 def test_backup_includes_recovery_data_and_excludes_books_and_caches(tmp_path: Path) -> None:
     store, _, backup = backup_fixture(tmp_path)
 
@@ -128,6 +151,8 @@ def test_backup_includes_recovery_data_and_excludes_books_and_caches(tmp_path: P
         names = set(archive.namelist())
         manifest = json.loads(archive.read("manifest.json"))
 
+    assert backup["format_version"] == 2
+    assert manifest["format_version"] == 2
     assert "payload/koreader/settings.reader.lua" in names
     assert "payload/koreader/settings/statistics.sqlite3" in names
     assert "payload/koreader/settings/vocabulary_builder.sqlite3" in names
@@ -172,6 +197,38 @@ def test_restore_reads_dictionary_from_content_addressed_store(tmp_path: Path) -
     store.restore(backup["id"], confirmed=True, restore_extensions=False, volume=volume)
 
     assert dictionary.read_bytes() == b"dictionary"
+
+
+def test_v1_backup_restores_inline_dictionary_and_new_backups_use_v2(tmp_path: Path) -> None:
+    store, volume, backup = backup_fixture(tmp_path)
+    legacy_backup = make_v1_backup(store, volume, backup)
+
+    current = store.create_from_kobo(volume)
+    assert current["created"] is True
+    assert current["backup"]["format_version"] == 2
+    assert store.list_backups()[0]["format_version"] == 2
+
+    dictionary = volume / ".adds/koreader/data/dict/custom.dict"
+    dictionary.unlink()
+    store.restore(legacy_backup["id"], confirmed=True, restore_extensions=False, volume=volume)
+
+    assert dictionary.read_bytes() == b"dictionary"
+
+
+def test_backup_format_version_is_inferred_from_archive_for_legacy_index_rows(tmp_path: Path) -> None:
+    store, volume, backup = backup_fixture(tmp_path)
+    v2_without_index_version = {key: value for key, value in backup.items() if key != "format_version"}
+    store.save_index({"version": 1, "backups": [v2_without_index_version]})
+
+    assert store.list_backups()[0]["format_version"] == 2
+
+    legacy_backup = make_v1_backup(store, volume, backup)
+    legacy_without_index_version = {
+        key: value for key, value in legacy_backup.items() if key != "format_version"
+    }
+    store.save_index({"version": 1, "backups": [legacy_without_index_version]})
+
+    assert store.list_backups()[0]["format_version"] == 1
 
 
 def test_dictionary_object_path_rejects_untrusted_checksum(tmp_path: Path) -> None:

@@ -61,6 +61,7 @@ export type AutoImportResult = {
 
 export type RecoveryBackup = {
   id: string;
+  format_version: number | null;
   created_at: string;
   source: string;
   source_mount: string;

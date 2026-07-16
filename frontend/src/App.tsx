@@ -176,6 +176,7 @@ import type {
 } from "./types";
 
 type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "export" | "settings";
+type BusyAction = "snapshot" | "import" | "upload" | "backup" | "restore";
 type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
 type NavItem = { id: View; label: string; icon: typeof Home; badge?: number };
 type ReadingDateFilter = { date: string; bookIds: string[] };
@@ -188,6 +189,8 @@ const tableMinimumHeight = 240;
 const recentBooksTableMinimumHeight = 420;
 const deviceStatusPollMs = 15_000;
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const supportedBackupFormatVersion = 2;
+const supportedBackupFormatVersions = new Set([1, supportedBackupFormatVersion]);
 
 function BookCover({
   book,
@@ -910,6 +913,7 @@ function DeviceBanner({
   onImport,
   onUploadClick,
   busy,
+  busyAction,
   compact = false,
 }: {
   status: DeviceStatus | null;
@@ -923,6 +927,7 @@ function DeviceBanner({
   onImport: () => void;
   onUploadClick: () => void;
   busy: boolean;
+  busyAction: BusyAction | null;
   compact?: boolean;
 }) {
   const mounted = status?.mounted ?? false;
@@ -939,6 +944,7 @@ function DeviceBanner({
   const snapshotLabel = activeSnapshot?.id === latestSnapshot?.id ? "Snapshot" : "Viewing";
   const showLatest = Boolean(latestSnapshot && activeSnapshot?.id !== latestSnapshot.id);
   const uploadAssignmentReady = isUploadAssignmentReady(importDevice, importDeviceLabel);
+  const importing = busyAction === "import";
 
   if (compact) {
     return (
@@ -964,8 +970,8 @@ function DeviceBanner({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button size="sm" aria-label="Import from Kobo" disabled={busy || !found} onClick={onImport}>
-            {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
-            {busy ? "Importing..." : "Import"}
+            {importing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+            {importing ? "Importing..." : "Import"}
           </Button>
           <Button size="sm" variant="outline" disabled={busy} onClick={onUploadClick}>
             <Upload data-icon="inline-start" />
@@ -992,8 +998,8 @@ function DeviceBanner({
         </div>
         <CardAction className="col-auto row-auto flex flex-wrap justify-self-start gap-2 @2xl/card-header:col-start-2 @2xl/card-header:row-span-2 @2xl/card-header:row-start-1 @2xl/card-header:justify-self-end">
           <Button disabled={busy || !found} onClick={onImport}>
-            {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
-            {busy ? "Importing..." : "Import from Kobo"}
+            {importing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+            {importing ? "Importing..." : "Import from Kobo"}
           </Button>
           <Button variant="outline" disabled={busy || (!compact && !uploadAssignmentReady)} onClick={onUploadClick}>
             <Upload data-icon="inline-start" />
@@ -2221,10 +2227,29 @@ function BackupCounts({ counts }: { counts: Record<string, number> }) {
   );
 }
 
+function BackupCompatibility({ formatVersion }: { formatVersion: number | null }) {
+  const supported = formatVersion != null && supportedBackupFormatVersions.has(formatVersion);
+  const formatLabel = formatVersion == null ? "Unknown format" : `Format v${formatVersion}`;
+  const compatibilityMessage = formatVersion === 2
+    ? "Dictionary files are stored in kostats' local backup store; keep the data directory with this backup."
+    : formatVersion === 1
+      ? "Legacy format: dictionary files are stored inside the backup archive."
+      : "This version of kostats can only restore format v1 or v2 backups.";
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      <Badge variant={supported ? "outline" : "destructive"}>
+        {supported ? formatLabel : `${formatLabel} unsupported`}
+      </Badge>
+      <span>{compatibilityMessage}</span>
+    </div>
+  );
+}
+
 function BackupsView({
   backups,
   device,
   busy,
+  busyAction,
   onCreate,
   onPreview,
   onRestore,
@@ -2232,6 +2257,7 @@ function BackupsView({
   backups: RecoveryBackup[];
   device: DeviceStatus | null;
   busy: boolean;
+  busyAction: BusyAction | null;
   onCreate: () => Promise<void>;
   onPreview: (id: string) => Promise<RestorePreview>;
   onRestore: (id: string, extensions: boolean) => Promise<RestoreResult>;
@@ -2242,6 +2268,8 @@ function BackupsView({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [restoreExtensions, setRestoreExtensions] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const backingUp = busyAction === "backup";
+  const restoring = busyAction === "restore";
 
   async function previewBackup(id: string) {
     setLoadingPreview(true);
@@ -2280,7 +2308,9 @@ function BackupsView({
       <CardHeader>
         <div>
           <CardTitle>Recovery backups</CardTitle>
-          <CardDescription>Books are excluded. Credentials may be included.</CardDescription>
+          <CardDescription>
+            Books are excluded. Credentials may be included. New backups use v{supportedBackupFormatVersion}; v1 backups are also supported.
+          </CardDescription>
         </div>
         <CardAction>
           <Button
@@ -2290,8 +2320,8 @@ function BackupsView({
               toast.error(err.message);
             })}
           >
-            {busy ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ArchiveRestore data-icon="inline-start" />}
-            {busy ? "Working..." : "Back up now"}
+            {backingUp ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ArchiveRestore data-icon="inline-start" />}
+            {backingUp ? "Working..." : "Back up now"}
           </Button>
         </CardAction>
       </CardHeader>
@@ -2320,14 +2350,14 @@ function BackupsView({
                   <div className="min-w-0">
                     <CardTitle>{formatDateTime(backup.created_at)}</CardTitle>
                     <CardDescription className="truncate">
-                      {backup.device_label ?? "Unknown device"} / {backup.koreader_version ?? "Unknown KOReader version"} / {formatBytes(backup.archive_size)}
+                      {backup.device_label ?? "Unknown device"} / KOReader {backup.koreader_version ?? "unknown version"} / {formatBytes(backup.archive_size)}
                     </CardDescription>
                   </div>
                   <CardAction>
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={busy || loadingPreview || !device?.mounted}
+                      disabled={busy || loadingPreview || !device?.mounted || backup.format_version == null || !supportedBackupFormatVersions.has(backup.format_version)}
                       onClick={() => previewBackup(backup.id)}
                     >
                       {loadingPreview ? "Scanning..." : "Restore"}
@@ -2339,6 +2369,7 @@ function BackupsView({
                   {backup.credentials_included ? (
                     <Badge variant="destructive">Contains credentials</Badge>
                   ) : null}
+                  <BackupCompatibility formatVersion={backup.format_version} />
                   <BackupCounts counts={backup.counts} />
                 </CardContent>
               </Card>
@@ -2428,7 +2459,7 @@ function BackupsView({
               <DialogFooter>
                 <Button variant="outline" onClick={() => setPreview(null)}>Close</Button>
                 <Button disabled={busy || !confirmed} onClick={runRestore}>
-                  {busy ? "Restoring..." : "Restore backup"}
+                  {restoring ? "Restoring..." : "Restore backup"}
                 </Button>
               </DialogFooter>
             </>
@@ -2821,7 +2852,8 @@ export default function App() {
   const [readingDateFilter, setReadingDateFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoImportError, setAutoImportError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
+  const busy = busyAction !== null;
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const pendingUploadAssignment = useRef<DeviceAssignment | undefined>(undefined);
@@ -2890,7 +2922,7 @@ export default function App() {
   }
 
   async function loadSnapshot(snapshotId: string) {
-    setBusy(true);
+    setBusyAction("snapshot");
     setError(null);
     setAutoImportError(null);
     try {
@@ -2904,7 +2936,7 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load snapshot");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -2930,7 +2962,7 @@ export default function App() {
   }, []);
 
   async function handleImport() {
-    setBusy(true);
+    setBusyAction("import");
     setError(null);
     setAutoImportError(null);
     try {
@@ -2946,7 +2978,7 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Import failed");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -2971,7 +3003,7 @@ export default function App() {
       pendingUploadAssignment.current = undefined;
       return;
     }
-    setBusy(true);
+    setBusyAction("upload");
     setError(null);
     setAutoImportError(null);
     try {
@@ -2989,14 +3021,14 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
       pendingUploadAssignment.current = undefined;
       if (fileInput.current) fileInput.current.value = "";
     }
   }
 
   async function handleBackup() {
-    setBusy(true);
+    setBusyAction("backup");
     setError(null);
     try {
       const created = await createKoboBackup();
@@ -3014,12 +3046,12 @@ export default function App() {
     } catch (err) {
       throw err instanceof Error ? err : new Error("Recovery backup failed");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function handleRestore(backupId: string, extensions: boolean) {
-    setBusy(true);
+    setBusyAction("restore");
     setError(null);
     try {
       const result = await restoreBackup(backupId, extensions);
@@ -3031,7 +3063,7 @@ export default function App() {
         .catch(() => undefined);
       return result;
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -3063,7 +3095,7 @@ export default function App() {
   }
 
   async function handleReassignSnapshot(snapshotId: string, targetDeviceId: string) {
-    setBusy(true);
+    setBusyAction("snapshot");
     setError(null);
     try {
       const result = await reassignSnapshot(snapshotId, { device_id: targetDeviceId });
@@ -3078,7 +3110,7 @@ export default function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reassign snapshot");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -3159,6 +3191,7 @@ export default function App() {
               onImport={handleImport}
               onUploadClick={handleUploadRequest}
               busy={busy}
+              busyAction={busyAction}
               compact={activeView !== "settings"}
             />
             <input
@@ -3216,6 +3249,7 @@ export default function App() {
                 backups={backups}
                 device={device}
                 busy={busy}
+                busyAction={busyAction}
                 onCreate={handleBackup}
                 onPreview={getRestorePreview}
                 onRestore={handleRestore}

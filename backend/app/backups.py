@@ -26,6 +26,7 @@ from .storage import copy_sqlite_database
 
 
 BACKUP_FORMAT_VERSION = 2
+SUPPORTED_BACKUP_FORMAT_VERSIONS = {1, BACKUP_FORMAT_VERSION}
 BOOK_EXTENSIONS = {
     ".azw",
     ".azw3",
@@ -317,8 +318,14 @@ class RecoveryBackupStore:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def read_payload(self, item: dict[str, Any], archive: zipfile.ZipFile) -> bytes:
-        if item["category"] != "dictionaries":
+    def read_payload(
+        self,
+        item: dict[str, Any],
+        archive: zipfile.ZipFile,
+        *,
+        format_version: int = BACKUP_FORMAT_VERSION,
+    ) -> bytes:
+        if item["category"] != "dictionaries" or format_version == 1:
             return archive.read(item["path"])
         checksum = item["sha256"]
         try:
@@ -358,6 +365,16 @@ class RecoveryBackupStore:
             return backups
         return [backup for backup in backups if backup.get("device_id") == device_id]
 
+    def summary_format_version(self, item: dict[str, Any]) -> int | None:
+        if "format_version" in item:
+            return item["format_version"]
+        try:
+            with zipfile.ZipFile(item["archive_path"], "r") as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+        except (OSError, KeyError, UnicodeError, json.JSONDecodeError, zipfile.BadZipFile):
+            return None
+        return manifest.get("format_version", 1)
+
     def with_device_defaults(self, item: dict[str, Any]) -> dict[str, Any]:
         registry = DeviceRegistry(self.root)
         fallback = registry.legacy_device_for_source(None)
@@ -367,6 +384,7 @@ class RecoveryBackupStore:
             device = {**fallback, "id": device_id}
         return {
             **item,
+            "format_version": self.summary_format_version(item),
             "device_id": device_id,
             "device_label": device.get("label") or item.get("device_label"),
             "device_model": device.get("model") or item.get("device_model"),
@@ -539,6 +557,7 @@ class RecoveryBackupStore:
                     for item in index["backups"]
                     if item.get("content_hash") == manifest["content_hash"]
                     and item.get("device_id") == manifest.get("device_id")
+                    and self.summary_format_version(item) == manifest["format_version"]
                 ),
                 None,
             )
@@ -553,6 +572,7 @@ class RecoveryBackupStore:
     def _summary(self, manifest: dict[str, Any], archive_path: Path) -> dict[str, Any]:
         return {
             "id": manifest["id"],
+            "format_version": manifest["format_version"],
             "created_at": manifest["created_at"],
             "source": manifest["source"],
             "source_mount": manifest["source_mount"],
@@ -584,15 +604,16 @@ class RecoveryBackupStore:
             manifest = json.loads(archive.read("manifest.json"))
         except (OSError, KeyError, UnicodeError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
             raise BackupError("The recovery backup archive is unreadable.") from exc
-        if manifest.get("format_version") != BACKUP_FORMAT_VERSION:
+        if manifest.get("format_version", 1) not in SUPPORTED_BACKUP_FORMAT_VERSIONS:
             archive.close()
             raise BackupError("The recovery backup format is not supported.")
         return manifest, archive
 
     def validate_archive(self, manifest: dict[str, Any], archive: zipfile.ZipFile) -> None:
+        format_version = manifest.get("format_version", 1)
         for item in manifest.get("payloads", []):
             try:
-                payload = self.read_payload(item, archive)
+                payload = self.read_payload(item, archive, format_version=format_version)
             except KeyError as exc:
                 raise BackupError(f"Backup payload is missing: {item['path']}") from exc
             if len(payload) != item["size"] or sha256_bytes(payload) != item["sha256"]:
@@ -660,7 +681,11 @@ class RecoveryBackupStore:
                     archive,
                     matches,
                     restore_extensions=restore_extensions,
-                    read_payload=self.read_payload,
+                    read_payload=lambda item, current_archive: self.read_payload(
+                        item,
+                        current_archive,
+                        format_version=manifest.get("format_version", 1),
+                    ),
                 )
                 if result["failed"]:
                     raise BackupError(
