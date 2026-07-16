@@ -531,6 +531,11 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText("No database yet");
+    const toolbar = within(screen.getByLabelText("Page toolbar"));
+    expect(toolbar.getByText("Overview")).toBeInTheDocument();
+    expect(toolbar.getByLabelText("Device filter")).toBeInTheDocument();
+    expect(toolbar.getByRole("button", { name: "Import from Kobo" })).toBeInTheDocument();
+    expect(toolbar.getByRole("button", { name: "Upload DB" })).toBeInTheDocument();
     const deviceBanner = within(screen.getByLabelText("Device import status"));
     expect(deviceBanner.queryByText("Import as")).not.toBeInTheDocument();
 
@@ -703,9 +708,9 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Reading overview", level: 1 })).toBeInTheDocument();
+    expect(await screen.findByText("Total reading time")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Reading overview", level: 1 })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Overview/i })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByText("Total reading time")).toBeInTheDocument();
     expect(screen.getByText("Days read")).toBeInTheDocument();
     expect(screen.getByText("Books in library")).toBeInTheDocument();
     expect(screen.getByText("Pages read")).toBeInTheDocument();
@@ -1617,10 +1622,10 @@ describe("App", () => {
 
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
     const deviceBanner = within(screen.getByLabelText("Device import status"));
-    expect(deviceBanner.getByText("Viewing")).toBeInTheDocument();
     expect(deviceBanner.getByText(/May 1, 2026/)).toBeInTheDocument();
-    expect(deviceBanner.getByText("Latest")).toBeInTheDocument();
-    expect(deviceBanner.getByText(/May 31, 2026/)).toBeInTheDocument();
+    expect(deviceBanner.queryByText("Viewing")).not.toBeInTheDocument();
+    expect(deviceBanner.queryByText("Latest")).not.toBeInTheDocument();
+    expect(deviceBanner.queryByText(/May 31, 2026/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo");
   });
 
@@ -1676,10 +1681,10 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("link", { name: /Overview/i }));
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
     const deviceBanner = within(screen.getByLabelText("Device import status"));
-    expect(deviceBanner.getByText("Viewing")).toBeInTheDocument();
     expect(deviceBanner.getByText(/May 1, 2026/)).toBeInTheDocument();
-    expect(deviceBanner.getByText("Latest")).toBeInTheDocument();
-    expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
+    expect(deviceBanner.queryByText("Viewing")).not.toBeInTheDocument();
+    expect(deviceBanner.queryByText("Latest")).not.toBeInTheDocument();
+    expect(deviceBanner.queryByText(/Jun 1, 2026/)).not.toBeInTheDocument();
   });
 
   it("refreshes merged dashboard data immediately after saving a device label", async () => {
@@ -1865,8 +1870,15 @@ describe("App", () => {
     const backupCard = screen.getByRole("article", { name: /Recovery backup/i });
     expect(within(backupCard).getByText("Contains credentials")).toBeInTheDocument();
     expect(within(backupCard).getByText(/KOReader v2026\.03/)).toBeInTheDocument();
-    expect(within(backupCard).getByText("Format v2")).toBeInTheDocument();
-    expect(within(backupCard).getByText(/local backup store/)).toBeInTheDocument();
+    const formatChip = within(backupCard).getByText("Format v2");
+    expect(formatChip).toHaveAttribute("tabindex", "0");
+    expect(within(backupCard).queryByText(/local backup store/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/New backups use v2/)).not.toBeInTheDocument();
+    await userEvent.hover(formatChip);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/local backup store/);
+    await userEvent.unhover(formatChip);
+    formatChip.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/local backup store/);
     expect(within(backupCard).getByText("sidecar files")).toBeInTheDocument();
     expect(within(backupCard).getByRole("button", { name: "Restore" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /Back up now/i }));
@@ -1960,8 +1972,10 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("link", { name: /Backups/i }));
 
     const backupCard = screen.getByRole("article", { name: /Recovery backup/i });
-    expect(within(backupCard).getByText("Format v1")).toBeInTheDocument();
-    expect(within(backupCard).getByText(/stored inside the backup archive/)).toBeInTheDocument();
+    const formatChip = within(backupCard).getByText("Format v1");
+    expect(within(backupCard).queryByText(/stored inside the backup archive/)).not.toBeInTheDocument();
+    await userEvent.hover(formatChip);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(/stored inside the backup archive/);
     expect(within(backupCard).getByRole("button", { name: "Restore" })).toBeEnabled();
   });
 

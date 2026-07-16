@@ -914,6 +914,8 @@ function DeviceBanner({
   onUploadClick,
   busy,
   busyAction,
+  deviceFilter,
+  onDeviceFilterChange,
   compact = false,
 }: {
   status: DeviceStatus | null;
@@ -928,6 +930,8 @@ function DeviceBanner({
   onUploadClick: () => void;
   busy: boolean;
   busyAction: BusyAction | null;
+  deviceFilter?: DeviceFilter;
+  onDeviceFilterChange?: (value: DeviceFilter) => void;
   compact?: boolean;
 }) {
   const mounted = status?.mounted ?? false;
@@ -943,32 +947,20 @@ function DeviceBanner({
   const stateVariant = mounted && found && !blocked ? "default" : mounted || blocked ? "destructive" : "outline";
   const snapshotLabel = activeSnapshot?.id === latestSnapshot?.id ? "Snapshot" : "Viewing";
   const showLatest = Boolean(latestSnapshot && activeSnapshot?.id !== latestSnapshot.id);
-  const uploadAssignmentReady = isUploadAssignmentReady(importDevice, importDeviceLabel);
   const importing = busyAction === "import";
 
   if (compact) {
     return (
       <div
         aria-label="Device import status"
-        className="flex min-w-0 flex-col gap-2 border-b pb-3 text-sm sm:flex-row sm:items-center"
+        className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm"
       >
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-          <Badge variant={stateVariant}>{stateLabel}</Badge>
-          <span className="text-muted-foreground">{snapshotLabel}</span>
-          <span className="font-medium">{activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
-          {activeSnapshot ? (
-            <span className="min-w-0 truncate text-muted-foreground" title={formatSnapshotSource(activeSnapshot)}>
-              {formatSnapshotSource(activeSnapshot)}
-            </span>
+        <Badge variant={stateVariant}>{stateLabel}</Badge>
+        <span className="font-medium">{activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {deviceFilter != null && onDeviceFilterChange ? (
+            <DeviceSelector devices={devices} value={deviceFilter} onChange={onDeviceFilterChange} />
           ) : null}
-          {showLatest ? (
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span>Latest</span>
-              <span className="text-foreground">{formatDateTime(latestSnapshot!.imported_at)}</span>
-            </span>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
           <Button size="sm" aria-label="Import from Kobo" disabled={busy || !found} onClick={onImport}>
             {importing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
             {importing ? "Importing..." : "Import"}
@@ -984,7 +976,7 @@ function DeviceBanner({
 
   return (
     <Card aria-label="Device import status">
-      <CardHeader className="grid-cols-1 gap-3 @2xl/card-header:grid-cols-[minmax(0,1fr)_auto]">
+      <CardHeader>
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <HardDrive />
@@ -996,16 +988,6 @@ function DeviceBanner({
             </CardDescription>
           </div>
         </div>
-        <CardAction className="col-auto row-auto flex flex-wrap justify-self-start gap-2 @2xl/card-header:col-start-2 @2xl/card-header:row-span-2 @2xl/card-header:row-start-1 @2xl/card-header:justify-self-end">
-          <Button disabled={busy || !found} onClick={onImport}>
-            {importing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
-            {importing ? "Importing..." : "Import from Kobo"}
-          </Button>
-          <Button variant="outline" disabled={busy || (!compact && !uploadAssignmentReady)} onClick={onUploadClick}>
-            <Upload data-icon="inline-start" />
-            Upload DB
-          </Button>
-        </CardAction>
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="grid gap-2">
@@ -2020,10 +2002,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
         <EmptyPanel icon={<Database />} title="No database yet" description="Import from Kobo or upload a KOReader database." />
       ) : null}
 
-      <section aria-labelledby="reading-overview-title" className="grid gap-5">
-        <h1 id="reading-overview-title" className="font-heading text-3xl leading-tight tracking-tight lg:text-4xl">
-          Reading overview
-        </h1>
+      <section className="grid gap-5">
         <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
           <PrimaryMetric label="Total reading time" value={dashboard.summary.total_time_label} />
           <PrimaryMetric label="Days read" value={dashboard.summary.reading_days.toLocaleString()} />
@@ -2208,7 +2187,7 @@ function SnapshotsView({
   );
 }
 
-function BackupCounts({ counts }: { counts: Record<string, number> }) {
+function BackupCounts({ counts, inline = false }: { counts: Record<string, number>; inline?: boolean }) {
   const labels = [
     ["sidecars", "sidecar files"],
     ["settings", "settings files"],
@@ -2216,15 +2195,12 @@ function BackupCounts({ counts }: { counts: Record<string, number> }) {
     ["dictionaries", "dictionary files"],
     ["extensions", "extension files"],
   ] as const;
-  return (
-    <div className="flex flex-wrap gap-2">
-      {labels.map(([key, label]) => (
-        <Badge variant="outline" key={key}>
-          <span className="font-semibold">{counts[key] ?? 0}</span> {label}
-        </Badge>
-      ))}
-    </div>
-  );
+  const badges = labels.map(([key, label]) => (
+    <Badge variant="outline" key={key}>
+      <span className="font-semibold">{counts[key] ?? 0}</span> {label}
+    </Badge>
+  ));
+  return inline ? badges : <div className="flex flex-wrap gap-2">{badges}</div>;
 }
 
 function BackupCompatibility({ formatVersion }: { formatVersion: number | null }) {
@@ -2236,12 +2212,14 @@ function BackupCompatibility({ formatVersion }: { formatVersion: number | null }
       ? "Legacy format: dictionary files are stored inside the backup archive."
       : "This version of kostats can only restore format v1 or v2 backups.";
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      <Badge variant={supported ? "outline" : "destructive"}>
-        {supported ? formatLabel : `${formatLabel} unsupported`}
-      </Badge>
-      <span>{compatibilityMessage}</span>
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge tabIndex={0} variant={supported ? "outline" : "destructive"}>
+          {supported ? formatLabel : `${formatLabel} unsupported`}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent>{compatibilityMessage}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -2309,7 +2287,7 @@ function BackupsView({
         <div>
           <CardTitle>Recovery backups</CardTitle>
           <CardDescription>
-            Books are excluded. Credentials may be included. New backups use v{supportedBackupFormatVersion}; v1 backups are also supported.
+            Books are excluded. Credentials may be included.
           </CardDescription>
         </div>
         <CardAction>
@@ -2366,11 +2344,13 @@ function BackupsView({
                 </CardHeader>
                 <CardContent className="grid gap-3">
                   <code className="truncate text-xs text-muted-foreground">{backup.source_mount}</code>
-                  {backup.credentials_included ? (
-                    <Badge variant="destructive">Contains credentials</Badge>
-                  ) : null}
-                  <BackupCompatibility formatVersion={backup.format_version} />
-                  <BackupCounts counts={backup.counts} />
+                  <div className="flex flex-wrap gap-2">
+                    {backup.credentials_included ? (
+                      <Badge variant="destructive">Contains credentials</Badge>
+                    ) : null}
+                    <BackupCompatibility formatVersion={backup.format_version} />
+                    <BackupCounts counts={backup.counts} inline />
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -3170,15 +3150,10 @@ export default function App() {
           <SidebarRail />
         </Sidebar>
         <SidebarInset>
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+          <header aria-label="Page toolbar" className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
             <span className="font-medium">{navItems.find((item) => item.id === activeView)?.label}</span>
-            <div className="ml-auto">
-              <DeviceSelector devices={devices} value={deviceFilter} onChange={handleDeviceFilterChange} />
-            </div>
-          </header>
-          <div className={cn("grid gap-4 p-4 md:p-6", activeView === "dashboard" && "overview-page gap-3 md:p-5")}>
             <DeviceBanner
               status={device}
               devices={devices}
@@ -3192,8 +3167,28 @@ export default function App() {
               onUploadClick={handleUploadRequest}
               busy={busy}
               busyAction={busyAction}
-              compact={activeView !== "settings"}
+              deviceFilter={deviceFilter}
+              onDeviceFilterChange={handleDeviceFilterChange}
+              compact
             />
+          </header>
+          <div className={cn("grid gap-4 p-4 md:p-6", activeView === "dashboard" && "overview-page gap-3 md:p-5")}>
+            {activeView === "settings" ? (
+              <DeviceBanner
+                status={device}
+                devices={devices}
+                importDevice={importDevice}
+                importDeviceLabel={importDeviceLabel}
+                activeSnapshot={activeSnapshot}
+                latestSnapshot={latestSnapshot}
+                onImportDeviceChange={setImportDevice}
+                onImportDeviceLabelChange={setImportDeviceLabel}
+                onImport={handleImport}
+                onUploadClick={handleUploadRequest}
+                busy={busy}
+                busyAction={busyAction}
+              />
+            ) : null}
             <input
               ref={fileInput}
               type="file"
