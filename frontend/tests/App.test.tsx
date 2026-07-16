@@ -723,7 +723,7 @@ describe("App", () => {
     expect(screen.getByLabelText("Device import status").closest('[data-slot="card"]')).toBeNull();
   });
 
-  it("renders daily chart bars through Recharts", async () => {
+  it("renders 16px daily chart bars through Recharts", async () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       bottom: 0,
       height: 210,
@@ -763,7 +763,13 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Daily reading")).toBeInTheDocument();
-    expect(document.querySelectorAll('[data-slot="chart"]').length).toBeGreaterThan(0);
+    const chartCard = screen.getByText("Daily reading").closest('[data-slot="card"]');
+    expect(chartCard).not.toBeNull();
+    expect(Array.from(chartCard!.querySelectorAll<SVGPathElement>("path.recharts-rectangle")))
+      .toHaveLength(daily.length);
+    for (const bar of chartCard!.querySelectorAll<SVGPathElement>("path.recharts-rectangle")) {
+      expect(bar).toHaveAttribute("width", "16");
+    }
   });
 
   it("renders sparse monthly chart data through Recharts", async () => {
@@ -1682,6 +1688,18 @@ describe("App", () => {
   });
 
   it("refreshes merged dashboard data immediately after saving a device label", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      bottom: 0,
+      height: 210,
+      left: 0,
+      right: 327,
+      top: 0,
+      width: 327,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
     const initialDashboard = {
       ...populatedDashboard,
       charts: {
@@ -1794,6 +1812,13 @@ describe("App", () => {
     render(<App />);
 
     expect((await screen.findAllByText("1h 30m")).length).toBeGreaterThan(0);
+    const initialDailyChartCard = screen.getByText("Daily reading").closest('[data-slot="card"]');
+    expect(initialDailyChartCard).not.toBeNull();
+    expect(Array.from(initialDailyChartCard!.querySelectorAll<SVGPathElement>("path.recharts-rectangle")))
+      .toHaveLength(initialDashboard.charts.daily_by_device.length * initialDashboard.charts.devices.length);
+    for (const bar of initialDailyChartCard!.querySelectorAll<SVGPathElement>("path.recharts-rectangle")) {
+      expect(bar).toHaveAttribute("width", "16");
+    }
     await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
     await userEvent.clear(screen.getByLabelText("Label for Travel Kobo"));
     await userEvent.type(screen.getByLabelText("Label for Travel Kobo"), "Primary Kobo");

@@ -299,6 +299,12 @@ const topBooksChartConfig = {
   },
 } satisfies ChartConfig;
 
+const verticalBarSizing = {
+  compact: 16,
+  monthly: 28,
+  categoryGap: "20%",
+} as const;
+
 const bookColumnLabels: Record<string, string> = {
   authors: "Author",
   highlight_count: "Highlights",
@@ -739,7 +745,12 @@ function BookActivityChart({
   const shape = stackedBarShape(stackKeys);
   return (
     <ChartContainer config={splitByDevice ? config : chartConfig} className="h-56 w-full">
-      <BarChart accessibilityLayer data={data} margin={{ left: 12, right: 32, top: 8, bottom: 8 }}>
+      <BarChart
+        accessibilityLayer
+        data={data}
+        margin={{ left: 12, right: 32, top: 8, bottom: 8 }}
+        barCategoryGap={verticalBarSizing.categoryGap}
+      >
         <CartesianGrid vertical={false} />
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
         <YAxis hide domain={[0, "dataMax"]} />
@@ -767,11 +778,12 @@ function BookActivityChart({
             key={device.id}
             dataKey={device.id}
             stackId="device"
+            barSize={verticalBarSizing.compact}
             fill={deviceColor(device.id)}
             isAnimationActive={false}
             shape={shape}
           />
-        )) : <Bar dataKey="minutes" barSize={16} fill="var(--color-minutes)" isAnimationActive={false} radius={4} />}
+        )) : <Bar dataKey="minutes" barSize={verticalBarSizing.compact} fill="var(--color-minutes)" isAnimationActive={false} radius={4} />}
       </BarChart>
     </ChartContainer>
   );
@@ -1231,7 +1243,12 @@ function ReadingBarChart({
           <EmptyPanel icon={<CalendarDays />} title="No reading data yet" />
         ) : (
           <ChartContainer config={chartConfig} className={cn(dominant ? "h-[17rem]" : "h-64", "w-full")}>
-            <BarChart accessibilityLayer data={data} margin={{ left: 0, right: 0, top: 8 }}>
+            <BarChart
+              accessibilityLayer
+              data={data}
+              margin={{ left: 0, right: 0, top: 8 }}
+              barCategoryGap={verticalBarSizing.categoryGap}
+            >
               <CartesianGrid vertical={false} />
               <XAxis
                 dataKey="label"
@@ -1257,7 +1274,7 @@ function ReadingBarChart({
               />
               <Bar
                 dataKey={valueKey}
-                barSize={valueKey === "hours" ? 28 : 10}
+                barSize={valueKey === "hours" ? verticalBarSizing.monthly : verticalBarSizing.compact}
                 fill={`var(--color-${valueKey})`}
                 isAnimationActive={false}
                 radius={[4, 4, 0, 0]}
@@ -1297,6 +1314,7 @@ function DeviceStackedBarChart({
     : (value: number) => formatDurationLabel(value * 3600);
   const stackKeys = devices.map((device) => device.id);
   const shape = stackedBarShape(stackKeys);
+  const barSize = unit === "hours" ? verticalBarSizing.monthly : verticalBarSizing.compact;
 
   return (
     <Card>
@@ -1308,7 +1326,12 @@ function DeviceStackedBarChart({
           <EmptyPanel icon={<CalendarDays />} title="No reading data yet" />
         ) : (
           <ChartContainer config={config} className={cn(dominant ? "h-[17rem]" : "h-64", "w-full")}>
-            <BarChart accessibilityLayer data={data} margin={{ left: 0, right: 0, top: 8 }}>
+            <BarChart
+              accessibilityLayer
+              data={data}
+              margin={{ left: 0, right: 0, top: 8 }}
+              barCategoryGap={verticalBarSizing.categoryGap}
+            >
               <CartesianGrid vertical={false} />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
               <YAxis hide domain={[0, "dataMax"]} />
@@ -1331,6 +1354,7 @@ function DeviceStackedBarChart({
                   key={device.id}
                   dataKey={device.id}
                   stackId="device"
+                  barSize={barSize}
                   fill={deviceColor(device.id)}
                   isAnimationActive={false}
                   shape={shape}
