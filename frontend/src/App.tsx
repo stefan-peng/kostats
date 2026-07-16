@@ -2018,7 +2018,10 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
         </div>
       </section>
 
-      <section className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(20rem,0.85fr)]">
+      <section
+        data-testid="dashboard-primary-insights"
+        className="grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(20rem,0.85fr)]"
+      >
         {dashboard.charts.devices?.length && dashboard.charts.daily_by_device?.length ? (
           <DeviceStackedBarChart
             title="Daily reading"

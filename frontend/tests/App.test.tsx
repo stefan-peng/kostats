@@ -715,6 +715,7 @@ describe("App", () => {
     expect(screen.getByText("Books in library")).toBeInTheDocument();
     expect(screen.getByText("Pages read")).toBeInTheDocument();
     expect(screen.getByText("Currently reading")).toBeInTheDocument();
+    expect(screen.getByTestId("dashboard-primary-insights")).toHaveClass("items-start");
     expect(screen.getByText("Recent sessions")).toBeInTheDocument();
     expect(screen.getByText("More reading insights")).toBeInTheDocument();
     expect(screen.queryByText("Longer-term patterns and all-time leaders.")).not.toBeInTheDocument();
