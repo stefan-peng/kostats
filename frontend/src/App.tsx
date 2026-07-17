@@ -177,6 +177,8 @@ import type {
 
 type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "export" | "settings";
 type BusyAction = "snapshot" | "import" | "upload" | "backup" | "restore";
+type ActionErrorKey = "import" | "upload" | "snapshot" | "rename";
+type UiError = { message: string; details?: string };
 type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
 type NavItem = { id: View; label: string; icon: typeof Home; badge?: number };
 type ReadingDateFilter = { date: string; bookIds: string[] };
@@ -957,6 +959,35 @@ function ErrorAlert({ title = "Error", children }: { title?: string; children: R
       <AlertTriangle />
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>{children}</AlertDescription>
+    </Alert>
+  );
+}
+
+function WarningAlert({
+  title,
+  message,
+  details,
+  children,
+}: {
+  title: string;
+  message: string;
+  details?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <Alert variant="warning">
+      <AlertTriangle />
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription className="grid gap-2">
+        <div>{message}</div>
+        {children ? <div className="flex flex-wrap gap-2">{children}</div> : null}
+        {details ? (
+          <details>
+            <summary className="cursor-pointer font-medium">Technical details</summary>
+            <code className="mt-1 block whitespace-pre-wrap break-words text-xs">{details}</code>
+          </details>
+        ) : null}
+      </AlertDescription>
     </Alert>
   );
 }
@@ -1972,12 +2003,14 @@ function SnapshotsView({
   activeSnapshotId,
   onSelectSnapshot,
   onReassignSnapshot,
+  actionError,
 }: {
   snapshots: Snapshot[];
   devices: DeviceSummary[];
   activeSnapshotId: string | null;
   onSelectSnapshot: (id: string) => void;
   onReassignSnapshot: (snapshotId: string, deviceId: string) => void;
+  actionError?: UiError;
 }) {
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
@@ -2072,6 +2105,11 @@ function SnapshotsView({
         <CardAction className="w-32"><TableColumnPicker table={table} /></CardAction>
       </CardHeader>
       <CardContent className="px-0 pb-0">
+        {actionError ? (
+          <div className="px-6 pb-4">
+            <WarningAlert title="Snapshot action failed" {...actionError} />
+          </div>
+        ) : null}
         <PaginatedTable ariaLabel="Snapshots table" table={table} emptyMessage="No snapshots have been imported yet." />
       </CardContent>
     </Card>
@@ -2151,7 +2189,6 @@ function BackupsView({
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not preview recovery backup";
       setLocalError(message);
-      toast.error(message);
     } finally {
       setLoadingPreview(false);
     }
@@ -2168,7 +2205,6 @@ function BackupsView({
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not restore recovery backup";
       setLocalError(message);
-      toast.error(message);
     }
   }
 
@@ -2186,7 +2222,6 @@ function BackupsView({
             disabled={busy || !device?.mounted}
             onClick={() => onCreate().catch((err: Error) => {
               setLocalError(err.message);
-              toast.error(err.message);
             })}
           >
             {backingUp ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ArchiveRestore data-icon="inline-start" />}
@@ -2547,12 +2582,14 @@ function SettingsView({
   snapshots,
   onRefresh,
   onRenameDevice,
+  renameError,
 }: {
   device: DeviceStatus | null;
   devices: DeviceSummary[];
   snapshots: Snapshot[];
   onRefresh: () => void;
   onRenameDevice: (deviceId: string, label: string) => Promise<void>;
+  renameError?: UiError;
 }) {
   const candidateDiagnostics = (device?.candidates ?? []).filter(
     (candidate) => candidate.error || (candidate.exists && !candidate.readable),
@@ -2577,6 +2614,7 @@ function SettingsView({
         </div>
         <div className="grid gap-3">
           <h4 className="text-sm font-medium">Devices</h4>
+          {renameError ? <WarningAlert title="Could not save label" {...renameError} /> : null}
           {devices.length === 0 ? (
             <EmptyPanel icon={<HardDrive />} title="No devices recorded yet" />
           ) : (
@@ -2721,8 +2759,10 @@ export default function App() {
   const [uploadDeviceLabel, setUploadDeviceLabel] = useState("");
   const [activeView, setActiveView] = useState<View>(viewFromHash);
   const [readingDateFilter, setReadingDateFilter] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [autoImportError, setAutoImportError] = useState<string | null>(null);
+  const [criticalError, setCriticalError] = useState<UiError | null>(null);
+  const [refreshError, setRefreshError] = useState<UiError | null>(null);
+  const [autoImportError, setAutoImportError] = useState<UiError | null>(null);
+  const [actionErrors, setActionErrors] = useState<Partial<Record<ActionErrorKey, UiError>>>({});
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const busy = busyAction !== null;
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
@@ -2733,6 +2773,34 @@ export default function App() {
   const latestDeviceStatus = useRef<DeviceStatus | null>(null);
   const autoImportRetryRequired = useRef(false);
   const deviceStatusRefreshInFlight = useRef(false);
+  const hasUsableDashboard = useRef(false);
+
+  function clearActionError(key: ActionErrorKey) {
+    setActionErrors((current) => ({ ...current, [key]: undefined }));
+  }
+
+  function reportActionError(key: ActionErrorKey, err: unknown, fallback: string) {
+    setActionErrors((current) => ({
+      ...current,
+      [key]: { message: fallback, details: err instanceof Error ? err.message : undefined },
+    }));
+  }
+
+  function publishDashboard(nextDashboard: Dashboard) {
+    hasUsableDashboard.current = nextDashboard.has_data;
+    setDashboard(nextDashboard);
+    setCriticalError(null);
+    setRefreshError(null);
+  }
+
+  function reportRefreshError(err: unknown) {
+    const details = err instanceof Error ? err.message : undefined;
+    if (hasUsableDashboard.current) {
+      setRefreshError({ message: "The dashboard could not be refreshed. The data already on screen is still available.", details });
+    } else {
+      setCriticalError({ message: "Dashboard data is unavailable. Check the connection and try again.", details });
+    }
+  }
 
   function publishDeviceStatus(nextDeviceStatus: DeviceStatus) {
     latestDeviceStatus.current = nextDeviceStatus;
@@ -2764,7 +2832,7 @@ export default function App() {
 
   async function refresh() {
     let deviceStatus = await getDeviceStatus();
-    let nextAutoImportError: string | null = null;
+    let nextAutoImportError: UiError | null = null;
     if (deviceStatus.mounted && deviceStatus.database_found && !deviceStatus.permission_error) {
       try {
         const autoResult = await autoImportFromKobo();
@@ -2774,7 +2842,10 @@ export default function App() {
       } catch (err) {
         // Background Kobo sync is a UI boundary: show the import failure while keeping local snapshots visible.
         autoImportRetryRequired.current = true;
-        nextAutoImportError = `Auto-import failed: ${err instanceof Error ? err.message : "Could not import from Kobo"}`;
+        nextAutoImportError = {
+          message: "Kobo could not be updated. The last successful import is still being shown.",
+          details: err instanceof Error ? err.message : "Could not import from Kobo",
+        };
       }
     }
     const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
@@ -2784,9 +2855,13 @@ export default function App() {
       getSnapshots(deviceFilter),
       getBackups(deviceFilter),
     ]);
+    const lastSuccessfulSnapshot = snapshotData.snapshots[0] ?? dashboardData.snapshot;
+    if (nextAutoImportError && lastSuccessfulSnapshot) {
+      nextAutoImportError.message = `Kobo could not be updated. The last successful import from ${formatDateTime(lastSuccessfulSnapshot.imported_at)} is still being shown.`;
+    }
     publishDeviceStatus(deviceStatus);
     setDevices(deviceData.devices);
-    setDashboard(dashboardData);
+    publishDashboard(dashboardData);
     setSnapshots(snapshotData.snapshots);
     setBackups(backupData.backups);
     setAutoImportError(nextAutoImportError);
@@ -2794,27 +2869,27 @@ export default function App() {
 
   async function loadSnapshot(snapshotId: string) {
     setBusyAction("snapshot");
-    setError(null);
+    clearActionError("snapshot");
     setAutoImportError(null);
     try {
       const snapshotDevice = snapshots.find((snapshot) => snapshot.id === snapshotId)?.device_id ?? deviceFilter;
       const selectedDashboard = await getDashboard(snapshotId, snapshotDevice);
       selectedSnapshotId.current = snapshotId;
       setDeviceFilter(snapshotDevice);
-      setDashboard(selectedDashboard);
+      publishDashboard(selectedDashboard);
       setReadingDateFilter(null);
       selectView("dashboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load snapshot");
+      reportActionError("snapshot", err, "Could not open this snapshot.");
     } finally {
       setBusyAction(null);
     }
   }
 
   useEffect(() => {
-    refresh().catch((err: Error) => setError(err.message));
+    refresh().catch(reportRefreshError);
     const id = window.setInterval(() => {
-      refreshDeviceStatus().catch((err: Error) => setError(err.message));
+      refreshDeviceStatus().catch(reportRefreshError);
     }, deviceStatusPollMs);
     return () => window.clearInterval(id);
   }, [deviceFilter]);
@@ -2834,20 +2909,20 @@ export default function App() {
 
   async function handleImport() {
     setBusyAction("import");
-    setError(null);
+    clearActionError("import");
     setAutoImportError(null);
     try {
       const assignment = assignmentFromSelection(importDevice, importDeviceLabel);
       if (assignment?.new_device_label === "") throw new Error("Enter a device name before importing.");
       const result = await importFromKobo(assignment);
       selectedSnapshotId.current = null;
-      setDashboard(result.dashboard);
+      publishDashboard(result.dashboard);
       setReadingDateFilter(null);
       selectView("dashboard");
       await refresh();
       toast.success("Imported from Kobo");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Import failed");
+      reportActionError("import", err, "Kobo could not be imported. You can retry or upload the database instead.");
     } finally {
       setBusyAction(null);
     }
@@ -2875,7 +2950,7 @@ export default function App() {
       return;
     }
     setBusyAction("upload");
-    setError(null);
+    clearActionError("upload");
     setAutoImportError(null);
     try {
       const assignment = pendingUploadAssignment.current ?? assignmentFromSelection(importDevice, importDeviceLabel);
@@ -2883,14 +2958,14 @@ export default function App() {
       if (assignment?.new_device_label === "") throw new Error("Enter a device name before uploading.");
       const result = await uploadDatabase(file, assignment);
       selectedSnapshotId.current = null;
-      setDashboard(result.dashboard);
+      publishDashboard(result.dashboard);
       setReadingDateFilter(null);
       selectView("dashboard");
       await refresh();
       setUploadDialogOpen(false);
       toast.success("Database uploaded");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      reportActionError("upload", err, "The database could not be uploaded. Check the file and try again.");
     } finally {
       setBusyAction(null);
       pendingUploadAssignment.current = undefined;
@@ -2900,7 +2975,6 @@ export default function App() {
 
   async function handleBackup() {
     setBusyAction("backup");
-    setError(null);
     try {
       const created = await createKoboBackup();
       setBackups((current) => [
@@ -2923,7 +2997,6 @@ export default function App() {
 
   async function handleRestore(backupId: string, extensions: boolean) {
     setBusyAction("restore");
-    setError(null);
     try {
       const result = await restoreBackup(backupId, extensions);
       getBackups(deviceFilter)
@@ -2945,7 +3018,7 @@ export default function App() {
   }
 
   async function handleRenameDevice(deviceId: string, label: string) {
-    setError(null);
+    clearActionError("rename");
     try {
       await renameDevice(deviceId, label.trim());
       const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
@@ -2956,30 +3029,30 @@ export default function App() {
         getBackups(deviceFilter),
       ]);
       setDevices(deviceData.devices);
-      setDashboard(dashboardData);
+      publishDashboard(dashboardData);
       setSnapshots(snapshotData.snapshots);
       setBackups(backupData.backups);
       toast.success("Device label saved");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save device label");
+      reportActionError("rename", err, "The device label could not be saved.");
     }
   }
 
   async function handleReassignSnapshot(snapshotId: string, targetDeviceId: string) {
     setBusyAction("snapshot");
-    setError(null);
+    clearActionError("snapshot");
     try {
       const result = await reassignSnapshot(snapshotId, { device_id: targetDeviceId });
       setSnapshots((current) => current.map((snapshot) => (snapshot.id === snapshotId ? result.snapshot : snapshot)));
       if (dashboard.snapshot?.id === snapshotId) {
         setDeviceFilter(result.snapshot.device_id ?? "all");
-        setDashboard(await getDashboard(snapshotId, result.snapshot.device_id ?? "all"));
+        publishDashboard(await getDashboard(snapshotId, result.snapshot.device_id ?? "all"));
       }
       const deviceData = await getDevices();
       setDevices(deviceData.devices);
       toast.success("Snapshot reassigned");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not reassign snapshot");
+      reportActionError("snapshot", err, "The snapshot could not be reassigned.");
     } finally {
       setBusyAction(null);
     }
@@ -3100,6 +3173,9 @@ export default function App() {
                   onValueChange={setUploadDevice}
                   onNewLabelChange={setUploadDeviceLabel}
                 />
+                {actionErrors.upload ? (
+                  <WarningAlert title="Upload failed" {...actionErrors.upload} />
+                ) : null}
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setUploadDialogOpen(false)}>
                     Cancel
@@ -3112,12 +3188,49 @@ export default function App() {
               </DialogContent>
             </Dialog>
 
-            {error ? <ErrorAlert>{error}</ErrorAlert> : null}
-            {autoImportError ? <ErrorAlert>{autoImportError}</ErrorAlert> : null}
-            {device?.permission_error ? (
-              <ErrorAlert>
-                The app could not read the KOReader database. Use Upload DB or grant this app permission to read the Kobo volume.
+            {criticalError ? (
+              <ErrorAlert title="Dashboard unavailable">
+                <div>{criticalError.message}</div>
+                <Button className="mt-2" size="sm" variant="outline" onClick={() => refresh().catch(reportRefreshError)}>Try again</Button>
+                {criticalError.details ? (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer font-medium">Technical details</summary>
+                    <code className="mt-1 block whitespace-pre-wrap break-words text-xs">{criticalError.details}</code>
+                  </details>
+                ) : null}
               </ErrorAlert>
+            ) : null}
+            {refreshError ? (
+              <WarningAlert title="Showing existing data" {...refreshError}>
+                <Button size="sm" variant="outline" onClick={() => refresh().catch(reportRefreshError)}>Retry refresh</Button>
+              </WarningAlert>
+            ) : null}
+            {autoImportError ? (
+              <WarningAlert title="Kobo update failed" {...autoImportError}>
+                <Button size="sm" variant="outline" onClick={handleImport}>Retry Kobo import</Button>
+                <Button size="sm" variant="outline" onClick={handleUploadRequest}>Upload DB</Button>
+              </WarningAlert>
+            ) : null}
+            {actionErrors.import ? (
+              <WarningAlert title="Import failed" {...actionErrors.import}>
+                <Button size="sm" variant="outline" onClick={handleImport}>Try again</Button>
+                <Button size="sm" variant="outline" onClick={handleUploadRequest}>Upload DB</Button>
+              </WarningAlert>
+            ) : null}
+            {actionErrors.upload && !uploadDialogOpen ? (
+              <WarningAlert title="Upload failed" {...actionErrors.upload}>
+                <Button size="sm" variant="outline" onClick={handleUploadRequest}>Choose another database</Button>
+              </WarningAlert>
+            ) : null}
+            {device?.permission_error ? (
+              <WarningAlert
+                title="Kobo access is blocked"
+                message="kostats cannot read the Kobo database. Grant access to the Kobo volume or upload the database manually."
+                details={device.permission_error}
+              >
+                <Button size="sm" variant="outline" onClick={() => refreshDeviceStatus().catch(reportRefreshError)}>Check access again</Button>
+                <Button size="sm" variant="outline" onClick={handleUploadRequest}>Upload DB</Button>
+              </WarningAlert>
             ) : null}
 
             {activeView === "dashboard" ? <MemoizedDashboardView dashboard={dashboard} /> : null}
@@ -3128,6 +3241,7 @@ export default function App() {
                 activeSnapshotId={activeSnapshot?.id ?? null}
                 onSelectSnapshot={loadSnapshot}
                 onReassignSnapshot={handleReassignSnapshot}
+                actionError={actionErrors.snapshot}
               />
             ) : null}
             {activeView === "backups" ? (
@@ -3160,8 +3274,9 @@ export default function App() {
                 device={device}
                 devices={devices}
                 snapshots={snapshots}
-                onRefresh={() => refresh().catch((err: Error) => setError(err.message))}
+                onRefresh={() => refresh().catch(reportRefreshError)}
                 onRenameDevice={handleRenameDevice}
+                renameError={actionErrors.rename}
               />
             ) : null}
           </div>

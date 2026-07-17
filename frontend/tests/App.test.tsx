@@ -512,6 +512,45 @@ describe("App", () => {
     expect(screen.getByText("Kobo not mounted")).toBeInTheDocument();
   });
 
+  it("shows a persistent critical alert when no dashboard data can load", async () => {
+    mockFetch(() => new Error("Backend connection refused"));
+
+    render(<App />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Dashboard unavailable");
+    expect(alert).toHaveTextContent("Dashboard data is unavailable");
+    expect(alert).toHaveClass("text-destructive");
+    expect(within(alert).getByText("Technical details")).toBeInTheDocument();
+    expect(within(alert).getByText("Backend connection refused")).toBeInTheDocument();
+  });
+
+  it("shows Kobo permission problems as recoverable warnings with actions", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) {
+        return {
+          mount_path: "H:\\",
+          mounted: true,
+          database_found: false,
+          selected_path: null,
+          permission_error: "Access denied while opening H:\\.adds\\koreader",
+          candidates: [],
+        };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+
+    render(<App />);
+
+    const warning = await screen.findByRole("alert");
+    expect(warning).toHaveTextContent("Kobo access is blocked");
+    expect(warning).toHaveClass("bg-warning/10");
+    expect(within(warning).getByRole("button", { name: "Check access again" })).toBeInTheDocument();
+    expect(within(warning).getByRole("button", { name: "Upload DB" })).toBeInTheDocument();
+    expect(within(warning).getByText("Technical details")).toBeInTheDocument();
+  });
+
   it("opens device assignment before uploading from compact views", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
@@ -966,8 +1005,12 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Import from Kobo/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/could not read the KOReader database/)).toBeInTheDocument();
+      expect(screen.getByText("Import failed")).toBeInTheDocument();
     });
+    const warning = screen.getByRole("alert");
+    expect(warning).toHaveTextContent("Kobo could not be imported");
+    expect(within(warning).getByText(/could not read the KOReader database/)).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-sonner-toast]")).toHaveLength(0);
     expect(screen.getAllByRole("button", { name: /Upload DB/i }).length).toBeGreaterThan(0);
   });
 
@@ -1124,8 +1167,14 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText(/Auto-import failed:/)).toBeInTheDocument();
-    expect(screen.getByText(/Unsupported KOReader statistics schema/)).toBeInTheDocument();
+    const warning = await screen.findByRole("alert");
+    expect(warning).toHaveTextContent("Kobo update failed");
+    expect(warning).toHaveTextContent(/Kobo could not be updated/);
+    expect(warning).toHaveTextContent(/last successful import from/);
+    expect(warning).toHaveTextContent(/is still being shown/);
+    expect(within(warning).getByText(/Unsupported KOReader statistics schema/)).toBeInTheDocument();
+    expect(within(warning).getByRole("button", { name: "Retry Kobo import" })).toBeInTheDocument();
+    expect(warning).toHaveClass("bg-warning/10");
     expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
     const snapshotsLink = screen.getByRole("link", { name: /Snapshots/i });
     expect(within(snapshotsLink.closest('[data-sidebar="menu-item"]') as HTMLElement).getByText("1")).toBeInTheDocument();
