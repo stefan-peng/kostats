@@ -45,6 +45,13 @@ def windows_volume_label(root: Path) -> str | None:
     return label.value if ok else None
 
 
+def windows_drive_exists(root: Path) -> bool:
+    try:
+        return root.exists()
+    except OSError:
+        return False
+
+
 def kobo_volume_candidates() -> list[Path]:
     configured = os.environ.get("KOSTATS_KOBO_VOLUME")
     if configured:
@@ -53,7 +60,7 @@ def kobo_volume_candidates() -> list[Path]:
     if sys.platform != "win32":
         return [DEFAULT_KOBO_VOLUME]
 
-    roots = [root for root in windows_drive_roots() if root.exists()]
+    roots = [root for root in windows_drive_roots() if windows_drive_exists(root)]
     labeled = [root for root in roots if windows_volume_label(root) == KOBO_VOLUME_LABEL]
     remaining = [root for root in roots if root not in labeled]
     return labeled + remaining

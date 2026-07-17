@@ -241,6 +241,26 @@ def test_kobo_volume_candidates_scans_existing_windows_drives(monkeypatch, tmp_p
     assert config.kobo_volume_candidates() == [labeled_drive, fallback_drive]
 
 
+def test_kobo_volume_candidates_skips_windows_drives_that_cannot_be_probed(monkeypatch, tmp_path: Path) -> None:
+    blocked_drive = tmp_path / "F"
+    kobo_drive = tmp_path / "E"
+    kobo_drive.mkdir()
+    monkeypatch.delenv("KOSTATS_KOBO_VOLUME", raising=False)
+    monkeypatch.setattr(config.sys, "platform", "win32")
+    monkeypatch.setattr(config, "windows_drive_roots", lambda: [blocked_drive, kobo_drive])
+    monkeypatch.setattr(config, "windows_volume_label", lambda root: "KOBOeReader" if root == kobo_drive else None)
+    original_exists = Path.exists
+
+    def fake_exists(path: Path) -> bool:
+        if path == blocked_drive:
+            raise OSError(87, "The parameter is incorrect")
+        return original_exists(path)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    assert config.kobo_volume_candidates() == [kobo_drive]
+
+
 def test_device_status_reports_windows_not_connected(monkeypatch, tmp_path: Path) -> None:
     drive = tmp_path / "C"
     drive.mkdir()
