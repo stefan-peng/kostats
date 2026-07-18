@@ -1042,7 +1042,7 @@ describe("App", () => {
     render(<App />);
 
     const deviceBanner = within(screen.getByLabelText("Device import status"));
-    expect(await deviceBanner.findByText("Ready to import")).toBeInTheDocument();
+    expect(await deviceBanner.findByText("Latest snapshot imported")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("link", { name: /Snapshots/i }));
     expect(screen.getAllByText(/E:\\.adds\\koreader\\settings\\statistics.sqlite3/).length).toBeGreaterThan(0);
     expect(autoImportUrls).toContain("/api/import/kobo/auto");
@@ -1079,7 +1079,7 @@ describe("App", () => {
     render(<App />);
 
     const deviceBanner = within(screen.getByLabelText("Device import status"));
-    expect(await deviceBanner.findByText("Ready to import")).toBeInTheDocument();
+    expect(await deviceBanner.findByText("Latest snapshot imported")).toBeInTheDocument();
     expect(deviceBanner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
     expect(autoImportUrls).toContain("/api/import/kobo/auto");
     expect(dashboardUrls).toHaveLength(1);
@@ -1710,6 +1710,8 @@ describe("App", () => {
     });
 
     render(<App />);
+
+    expect(await screen.findByText("Latest snapshot imported")).toBeInTheDocument();
 
     await userEvent.click(await screen.findByRole("link", { name: /Snapshots/i }));
     await userEvent.click(screen.getAllByRole("button", { name: "View" })[0]);
