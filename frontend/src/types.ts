@@ -56,6 +56,7 @@ export type AutoImportResult = {
   reason: "changed" | "unchanged" | "not_mounted" | "database_missing" | "access_blocked" | "device_unassigned";
   snapshot: Snapshot | null;
   device: DeviceStatus;
+  covers_changed?: boolean;
   dashboard?: Dashboard;
 };
 

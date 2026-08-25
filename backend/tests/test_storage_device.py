@@ -71,9 +71,9 @@ def write_sidecar(volume: Path, *, status: str, percent: float = 0.5) -> Path:
     return path
 
 
-def write_cover_epub(volume: Path) -> None:
+def write_cover_epub(volume: Path, *, color: str = "red") -> None:
     image = BytesIO()
-    Image.new("RGB", (20, 30), "red").save(image, format="PNG")
+    Image.new("RGB", (20, 30), color).save(image, format="PNG")
     path = volume / "books/Test Book.epub"
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, "w") as archive:
@@ -522,6 +522,29 @@ def test_unchanged_auto_import_repairs_cover_without_snapshot(tmp_path: Path) ->
     assert second["snapshot"]["id"] == first["snapshot"]["id"]
     assert len(store.list_snapshots()) == 1
     assert (store.root / "covers/manifest.json").exists()
+
+
+def test_unchanged_auto_import_refreshes_a_changed_cover_without_snapshot(tmp_path: Path) -> None:
+    volume = tmp_path / "KOBOeReader"
+    db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
+    create_db(db_path)
+    add_reading_row(db_path, book_id=1, title="Test Book", duration=1200)
+    write_sidecar(volume, status="reading")
+    write_cover_epub(volume, color="red")
+    store = SnapshotStore(tmp_path / "data")
+    register_auto_import_device(store, volume)
+    first = auto_import_from_kobo(store, volume)
+    first_manifest = (store.root / "covers/manifest.json").read_text(encoding="utf-8")
+
+    write_cover_epub(volume, color="blue")
+    second = auto_import_from_kobo(store, volume)
+    second_manifest = (store.root / "covers/manifest.json").read_text(encoding="utf-8")
+
+    assert second["reason"] == "unchanged"
+    assert second["covers_changed"] is True
+    assert second["snapshot"]["id"] == first["snapshot"]["id"]
+    assert len(store.list_snapshots()) == 1
+    assert second_manifest != first_manifest
 
 
 def test_cover_failure_never_fails_statistics_import(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

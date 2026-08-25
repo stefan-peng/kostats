@@ -200,6 +200,7 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
         "reason": "not_mounted",
         "snapshot": latest_payload,
         "device": status,
+        "covers_changed": False,
     }
 
     if not status["mounted"]:
@@ -226,7 +227,9 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
 
             sidecar_snapshot = build_sidecar_snapshot(Path(status["mount_path"]))
             try:
-                populate_cover_cache(Path(status["mount_path"]), sidecar_snapshot["records"], store.root)
+                result["covers_changed"] = populate_cover_cache(
+                    Path(status["mount_path"]), sidecar_snapshot["records"], store.root
+                )
             except Exception:
                 pass
             sidecar_payload = serialize_sidecar_snapshot(sidecar_snapshot)
@@ -255,4 +258,5 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
         "reason": "changed",
         "snapshot": meta.__dict__,
         "device": status,
+        "covers_changed": result["covers_changed"],
     }

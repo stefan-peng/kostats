@@ -19,7 +19,7 @@ MAX_COVER_DIMENSION = 1600
 MAX_CONTAINER_BYTES = 1024 * 1024
 MAX_OPF_BYTES = 4 * 1024 * 1024
 MAX_COVER_BYTES = 50 * 1024 * 1024
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 
 
 def covers_dir(data_root: Path) -> Path:
@@ -43,10 +43,27 @@ def load_cover_manifest(data_root: Path) -> dict[str, str]:
     } if isinstance(covers, dict) else {}
 
 
-def save_cover_manifest(data_root: Path, covers: dict[str, str]) -> None:
+def load_cover_source_fingerprints(data_root: Path) -> dict[str, str]:
+    try:
+        payload = json.loads(manifest_path(data_root).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    fingerprints = payload.get("source_fingerprints") if isinstance(payload, dict) else None
+    return {
+        str(checksum): str(fingerprint)
+        for checksum, fingerprint in fingerprints.items()
+        if isinstance(fingerprints, dict) and isinstance(checksum, str) and isinstance(fingerprint, str)
+    } if isinstance(fingerprints, dict) else {}
+
+
+def save_cover_manifest(
+    data_root: Path,
+    covers: dict[str, str],
+    source_fingerprints: dict[str, str] | None = None,
+) -> None:
     root = covers_dir(data_root)
     root.mkdir(parents=True, exist_ok=True)
-    payload = {"version": MANIFEST_VERSION, "covers": covers}
+    payload = {"version": MANIFEST_VERSION, "covers": covers, "source_fingerprints": source_fingerprints or {}}
     fd, temporary = tempfile.mkstemp(prefix="manifest-", suffix=".tmp", dir=root)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -199,19 +216,27 @@ def write_asset(data_root: Path, asset_id: str, payload: bytes) -> None:
         raise
 
 
-def populate_cover_cache(volume: Path, records: list[dict[str, Any]], data_root: Path) -> None:
+def populate_cover_cache(volume: Path, records: list[dict[str, Any]], data_root: Path) -> bool:
     manifest = load_cover_manifest(data_root)
+    source_fingerprints = load_cover_source_fingerprints(data_root)
     updated = dict(manifest)
+    updated_fingerprints = dict(source_fingerprints)
     for record in records:
         try:
             checksum = record.get("partial_md5_checksum")
             if not isinstance(checksum, str) or not checksum:
                 continue
-            existing = manifest.get(checksum)
-            if existing and (covers_dir(data_root) / f"{existing}.webp").is_file():
-                continue
             epub = normalized_epub_path(volume, record.get("doc_path"))
             if epub is None:
+                continue
+            stat = epub.stat()
+            fingerprint = f"{stat.st_mtime_ns}:{stat.st_size}"
+            existing = manifest.get(checksum)
+            if (
+                existing
+                and (covers_dir(data_root) / f"{existing}.webp").is_file()
+                and source_fingerprints.get(checksum) == fingerprint
+            ):
                 continue
             payload = epub_cover_bytes(epub)
             normalized = normalized_cover(payload) if payload is not None else None
@@ -219,14 +244,21 @@ def populate_cover_cache(volume: Path, records: list[dict[str, Any]], data_root:
                 continue
             asset_id, asset = normalized
             write_asset(data_root, asset_id, asset)
+            # The same KOReader checksum can point to an EPUB whose embedded
+            # cover has since been replaced.  Keep the checksum mapping current;
+            # old content-addressed assets remain harmless and can be shared.
             updated[checksum] = asset_id
+            updated_fingerprints[checksum] = fingerprint
         except Exception:
             continue
-    if updated != manifest:
+    covers_changed = updated != manifest
+    if covers_changed or updated_fingerprints != source_fingerprints:
         try:
-            save_cover_manifest(data_root, updated)
+            save_cover_manifest(data_root, updated, updated_fingerprints)
+            return covers_changed
         except Exception:
             pass
+    return False
 
 
 def cover_url_for_md5s(
