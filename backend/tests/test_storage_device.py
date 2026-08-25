@@ -261,6 +261,45 @@ def test_kobo_volume_candidates_skips_windows_drives_that_cannot_be_probed(monke
     assert config.kobo_volume_candidates() == [kobo_drive]
 
 
+def test_linux_kobo_volume_candidates_include_standard_and_active_mounts(monkeypatch, tmp_path: Path) -> None:
+    mountinfo = tmp_path / "mountinfo"
+    mountinfo.write_text(
+        "36 25 0:32 / /media/alice/KOBOeReader rw,nosuid,nodev - vfat /dev/sdb1 rw\n"
+        "37 25 0:33 / /run/media/alice/Other\\040Reader rw,nosuid,nodev - exfat /dev/sdc1 rw\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("KOSTATS_KOBO_VOLUME", raising=False)
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    original_linux_mount_points = config.linux_mount_points
+    monkeypatch.setattr(config, "linux_mount_points", lambda: original_linux_mount_points(mountinfo))
+
+    assert config.kobo_volume_candidates() == [
+        Path("/media/alice/KOBOeReader"),
+        Path("/run/media/alice/Other Reader"),
+    ]
+
+
+def test_linux_mount_points_ignores_non_removable_mounts(tmp_path: Path) -> None:
+    mountinfo = tmp_path / "mountinfo"
+    mountinfo.write_text(
+        "22 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n"
+        "36 25 0:32 / /media/alice/KOBOeReader rw,nosuid,nodev - vfat /dev/sdb1 rw\n",
+        encoding="utf-8",
+    )
+
+    assert config.linux_mount_points(mountinfo) == [Path("/media/alice/KOBOeReader")]
+
+
+def test_linux_default_mount_status_requires_kobo_volume_name(monkeypatch) -> None:
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    mounted_kobo = Path("/media/alice/KOBOeReader")
+    monkeypatch.setattr(config, "linux_mount_points", lambda: [mounted_kobo])
+
+    assert config.kobo_volume_is_default_mount_path(mounted_kobo) is True
+    assert config.kobo_volume_is_default_mount_path(Path("/mnt/KOBOeReader")) is False
+    assert config.kobo_volume_is_default_mount_path(Path("/media/alice/Other Reader")) is False
+
+
 def test_device_status_reports_windows_not_connected(monkeypatch, tmp_path: Path) -> None:
     drive = tmp_path / "C"
     drive.mkdir()
