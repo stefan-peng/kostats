@@ -314,6 +314,7 @@ const bookColumnLabels: Record<string, string> = {
   pages: "Pages seen",
   position: "Position",
   progress: "Progress",
+  remaining: "Remaining",
   records: "Records",
   status: "Status",
   time_seconds: "Time",
@@ -645,6 +646,12 @@ function estimateDescription(book: BookStats) {
   if (effectiveStatus(book) !== "reading") return "Only shown for books in progress";
   if (!book.total_pages || !book.max_page) return "Need a page total and current page";
   return "Not enough data for an estimate";
+}
+
+function formatEstimatedRemaining(book: BookStats) {
+  return book.estimated_remaining_seconds == null
+    ? "—"
+    : `~${formatDurationLabel(book.estimated_remaining_seconds)} left`;
 }
 
 function SessionTable({
@@ -1510,6 +1517,17 @@ function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]
       },
       { accessorKey: "time_label", header: "Time", size: 100, minSize: 80, maxSize: 160 },
       {
+        id: "remaining",
+        accessorKey: "estimated_remaining_seconds",
+        header: "Remaining",
+        cell: ({ row }) => (
+          <span title={estimateDescription(row.original)}>{formatEstimatedRemaining(row.original)}</span>
+        ),
+        size: 140,
+        minSize: 110,
+        maxSize: 220,
+      },
+      {
         accessorKey: "pages",
         header: "Pages",
         cell: ({ row }) => row.original.pages.toLocaleString(),
@@ -1702,6 +1720,17 @@ function BooksView({
         size: 100,
         minSize: 80,
         maxSize: 160,
+      },
+      {
+        id: "remaining",
+        accessorKey: "estimated_remaining_seconds",
+        header: ({ column }) => sortableHeader(column, "Remaining"),
+        cell: ({ row }) => (
+          <span title={estimateDescription(row.original)}>{formatEstimatedRemaining(row.original)}</span>
+        ),
+        size: 140,
+        minSize: 110,
+        maxSize: 220,
       },
       {
         accessorKey: "pages",
