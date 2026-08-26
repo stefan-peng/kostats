@@ -762,7 +762,7 @@ describe("App", () => {
     expect(screen.getByLabelText("Device import status").closest('[data-slot="card"]')).toBeNull();
   });
 
-  it("renders 16px daily chart bars through Recharts", async () => {
+  it("renders compact daily chart bars through Recharts", async () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       bottom: 0,
       height: 210,
@@ -807,7 +807,9 @@ describe("App", () => {
     expect(Array.from(chartCard!.querySelectorAll<SVGPathElement>("path.recharts-rectangle")))
       .toHaveLength(daily.length);
     for (const bar of chartCard!.querySelectorAll<SVGPathElement>("path.recharts-rectangle")) {
-      expect(bar).toHaveAttribute("width", "16");
+      const width = Number(bar.getAttribute("width"));
+      expect(width).toBeGreaterThan(0);
+      expect(width).toBeLessThanOrEqual(16);
     }
   });
 

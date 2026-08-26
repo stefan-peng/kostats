@@ -628,6 +628,14 @@ function formatMinutes(minutes: number) {
   return remainder ? `${hours}h ${String(remainder).padStart(2, "0")}m` : `${hours}h`;
 }
 
+function formatChartAxisValue(value: number, unit: "minutes" | "hours") {
+  const rounded = Math.round(value * 10) / 10;
+  if (unit === "minutes") {
+    return rounded >= 60 ? `${Math.round((rounded / 60) * 10) / 10}h` : `${rounded}m`;
+  }
+  return `${rounded}h`;
+}
+
 function formatDurationLabel(seconds: number) {
   const totalMinutes = Math.round(seconds / 60);
   const hours = Math.floor(totalMinutes / 60);
@@ -762,7 +770,14 @@ function BookActivityChart({
       >
         <CartesianGrid vertical={false} />
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
-        <YAxis hide domain={[0, "dataMax"]} />
+        <YAxis
+          domain={[0, "dataMax"]}
+          tickFormatter={(value) => formatChartAxisValue(Number(value), "minutes")}
+          tickLine={false}
+          axisLine={false}
+          tickMargin={8}
+          width={44}
+        />
         <ChartTooltip
           cursor={false}
           content={
@@ -1299,7 +1314,14 @@ function ReadingBarChart({
                 tickMargin={8}
                 interval="preserveStartEnd"
               />
-              <YAxis hide domain={[0, "dataMax"]} />
+              <YAxis
+                domain={[0, "dataMax"]}
+                tickFormatter={(value) => formatChartAxisValue(Number(value), valueKey)}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={44}
+              />
               <ChartTooltip
                 cursor={false}
                 content={
@@ -1376,7 +1398,14 @@ function DeviceStackedBarChart({
             >
               <CartesianGrid vertical={false} />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
-              <YAxis hide domain={[0, "dataMax"]} />
+              <YAxis
+                domain={[0, "dataMax"]}
+                tickFormatter={(value) => formatChartAxisValue(Number(value), unit)}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                width={44}
+              />
               <ChartTooltip
                 cursor={false}
                 content={
@@ -1451,7 +1480,13 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
           <ChartContainer config={topBooksChartConfig} className="h-64 w-full">
             <BarChart accessibilityLayer data={chartData} layout="vertical" margin={{ left: 8, right: 24, top: 8 }}>
               <CartesianGrid horizontal={false} />
-              <XAxis type="number" hide />
+              <XAxis
+                type="number"
+                tickFormatter={(value) => formatChartAxisValue(Number(value), "hours")}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+              />
               <YAxis
                 dataKey="label"
                 type="category"
