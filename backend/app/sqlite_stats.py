@@ -639,6 +639,16 @@ def build_dashboard(
             merged_book_ids_by_source[source_book_id] = merged_book_id
         source_md5s = sorted({book["md5"] for book in group if book["md5"]})
         latest_book = max(group, key=lambda item: (item["last_open_timestamp"], item["id"]))
+        position_book = max(
+            group,
+            key=lambda item: (
+                (item["max_page"] / item["total_pages"])
+                if item["max_page"] and item["total_pages"]
+                else -1,
+                item["last_open_timestamp"],
+                item["id"],
+            ),
+        )
         matched_sidecars = [book["sidecar"] for book in group if book["sidecar"] is not None]
         sidecar = max(matched_sidecars, key=sidecar_sort_key) if matched_sidecars else None
         pages_seen = set()
@@ -646,8 +656,8 @@ def build_dashboard(
             pages_seen.update(book["pages_seen"])
 
         pages_read = len(pages_seen)
-        max_page = latest_book["max_page"]
-        total_pages = latest_book["total_pages"]
+        max_page = position_book["max_page"]
+        total_pages = position_book["total_pages"]
         page_progress = None
         if total_pages and max_page:
             page_progress = min(100, round((max_page / total_pages) * 100))
@@ -668,7 +678,10 @@ def build_dashboard(
         for book in group:
             for day, seconds in book["day_seconds"].items():
                 book_day_seconds[day] += seconds
-        pace_seconds_per_page = time_seconds / pages_read if pages_read else None
+        # Reading is assumed to progress from the beginning of the book across
+        # devices without overlapping.  The current position therefore gives
+        # the number of pages covered by the accumulated reading time.
+        pace_seconds_per_page = time_seconds / max_page if max_page else None
         remaining_pages = max(total_pages - max_page, 0) if total_pages and max_page else None
         estimated_remaining_seconds = None
         if (
@@ -955,16 +968,26 @@ def aggregate_dashboards(
     aggregate_id_by_device_book_id: dict[str, str] = {}
     for group in books_by_key.values():
         latest = max(group, key=lambda item: (item.get("last_open") or "", item.get("id") or ""))
+        position_book = max(
+            group,
+            key=lambda item: (
+                (float(item.get("max_page")) / float(item.get("total_pages")))
+                if item.get("max_page") and item.get("total_pages")
+                else -1,
+                item.get("last_open") or "",
+                item.get("id") or "",
+            ),
+        )
         time_seconds = sum(float(item.get("time_seconds") or 0) for item in group)
         has_page_numbers = any("_page_numbers" in item for item in group)
         page_numbers = {page for item in group for page in item.get("_page_numbers", [])}
         pages_seen = len(page_numbers) if has_page_numbers else sum(int(item.get("pages") or 0) for item in group)
-        pace_seconds_per_page = time_seconds / pages_seen if pages_seen else None
-        latest_total_pages = latest.get("total_pages")
-        latest_max_page = latest.get("max_page")
+        total_pages = position_book.get("total_pages")
+        current_page = position_book.get("max_page")
+        pace_seconds_per_page = time_seconds / int(current_page) if current_page else None
         remaining_pages = (
-            max(int(latest_total_pages) - int(latest_max_page), 0)
-            if latest_total_pages and latest_max_page
+            max(int(total_pages) - int(current_page), 0)
+            if total_pages and current_page
             else None
         )
         estimated_remaining_seconds = None
@@ -1006,6 +1029,8 @@ def aggregate_dashboards(
             "time_seconds": round(time_seconds, 2),
             "time_label": format_duration(time_seconds),
             "pages": pages_seen,
+            "max_page": current_page,
+            "total_pages": total_pages,
             "highlight_count": max(int(item.get("highlight_count") or 0) for item in group),
             "note_count": max(int(item.get("note_count") or 0) for item in group),
             "source_book_ids": source_book_ids,

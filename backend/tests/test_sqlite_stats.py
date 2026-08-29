@@ -393,8 +393,8 @@ def test_sessions_and_book_pace_use_global_event_order(tmp_path: Path) -> None:
     assert sessions["recent"][1]["book_ids"] == ["1", "2"]
     assert sessions["recent"][1]["elapsed_seconds"] == 3720
     first_book = next(book for book in dashboard["books"] if book["id"] == "1")
-    assert first_book["pace_seconds_per_page"] == 940
-    assert first_book["estimated_remaining_seconds"] == 83660
+    assert first_book["pace_seconds_per_page"] == 256.36
+    assert first_book["estimated_remaining_seconds"] == 22816.36
     assert len(first_book["recent_sessions"]) == 2
 
 
@@ -408,7 +408,23 @@ def test_time_estimate_is_available_with_short_reading_history(tmp_path: Path) -
 
     first_book = next(book for book in dashboard["books"] if book["id"] == "1")
     assert first_book["time_seconds"] == 180
-    assert first_book["estimated_remaining_seconds"] == 5340
+    assert first_book["estimated_remaining_seconds"] == 1456.36
+
+
+def test_time_estimate_uses_current_page_for_pace(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_session_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE page_stat_data SET page = 100, total_pages = 1000 WHERE id_book = 1 AND page = 10")
+        conn.execute("UPDATE page_stat_data SET total_pages = 1000 WHERE id_book = 1")
+
+    dashboard = build_dashboard(db_path)
+
+    first_book = next(book for book in dashboard["books"] if book["id"] == "1")
+    assert first_book["pages"] == 3
+    assert first_book["max_page"] == 100
+    assert first_book["pace_seconds_per_page"] == 28.2
+    assert first_book["estimated_remaining_seconds"] == 25380
 
 
 def test_aggregate_dashboard_keeps_device_sessions_visible(tmp_path: Path) -> None:
@@ -424,8 +440,8 @@ def test_aggregate_dashboard_keeps_device_sessions_visible(tmp_path: Path) -> No
     assert aggregate["insights"]["sessions"]["recent"][0]["device_label"] == "unknown"
     aggregate_book = next(book for book in aggregate["books"] if book["title"] == "Session One")
     assert aggregate_book["pages"] == 3
-    assert aggregate_book["pace_seconds_per_page"] == 1880
-    assert aggregate_book["estimated_remaining_seconds"] == 167320
+    assert aggregate_book["pace_seconds_per_page"] == 512.73
+    assert aggregate_book["estimated_remaining_seconds"] == 45632.73
 
 
 def test_single_dashboard_aggregate_does_not_expose_internal_session_data(tmp_path: Path) -> None:
@@ -643,6 +659,21 @@ def test_duplicate_book_records_merge_conservatively(tmp_path: Path) -> None:
     assert unknown_author["source_book_ids"] == ["13", "14"]
     assert unknown_author["source_md5s"] == ["u1", "u2"]
     assert unknown_author["merged_count"] == 2
+
+
+def test_merged_book_estimate_uses_furthest_progress_not_latest_reopen(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_duplicate_books_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE book SET last_open = 1771000000 WHERE id = 1")
+
+    dashboard = build_dashboard(db_path)
+
+    merged = next(book for book in dashboard["books"] if book["title"] == "Merged Work")
+    assert merged["max_page"] == 60
+    assert merged["total_pages"] == 120
+    assert merged["pace_seconds_per_page"] == 16.67
+    assert merged["estimated_remaining_seconds"] == 1000
 
 
 def test_duplicate_book_false_positive_controls(tmp_path: Path) -> None:
