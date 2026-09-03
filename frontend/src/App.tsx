@@ -667,11 +667,15 @@ function SessionTable({
   ariaLabel = "Reading sessions table",
   showBooks = true,
   showColumnPicker = true,
+  title,
+  emptyContent,
 }: {
   sessions: ReadingSession[];
   ariaLabel?: string;
   showBooks?: boolean;
   showColumnPicker?: boolean;
+  title?: string;
+  emptyContent?: ReactNode;
 }) {
   const showsDevice = sessions.some((session) => session.device_label);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
@@ -737,10 +741,17 @@ function SessionTable({
   });
   return (
     <div className="grid min-w-0 gap-2">
-      {showColumnPicker ? (
+      {title ? (
+        <CardHeader>
+          <CardTitle>{title}</CardTitle>
+          {showColumnPicker && sessions.length ? (
+            <CardAction><div className="w-32"><TableColumnPicker table={table} /></div></CardAction>
+          ) : null}
+        </CardHeader>
+      ) : showColumnPicker ? (
         <div className="flex justify-end pr-4"><div className="w-32"><TableColumnPicker table={table} /></div></div>
       ) : null}
-      <PaginatedTable ariaLabel={ariaLabel} table={table} emptyMessage="No sessions yet." />
+      {emptyContent ?? <PaginatedTable ariaLabel={ariaLabel} table={table} emptyMessage="No sessions yet." />}
     </div>
   );
 }
@@ -1672,21 +1683,21 @@ function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOp
                 </CardContent>
               </Card>
               <Card>
-                <CardHeader>
-                  <CardTitle>Recent sessions</CardTitle>
-                  <CardDescription>Sessions that included this book.</CardDescription>
-                </CardHeader>
                 <CardContent className="px-0 pb-0">
-                  {recentSessions.length ? (
-                    <SessionTable ariaLabel="Book reading sessions" sessions={recentSessions} showBooks={false} />
-                  ) : (
+                  <SessionTable
+                    ariaLabel="Book reading sessions"
+                    sessions={recentSessions}
+                    showBooks={false}
+                    title="Recent sessions"
+                    emptyContent={recentSessions.length ? undefined : (
                     <Empty className="border-x">
                       <EmptyHeader>
                         <EmptyTitle>No qualifying sessions</EmptyTitle>
                         <EmptyDescription>This book has no recorded reading sessions yet.</EmptyDescription>
                       </EmptyHeader>
                     </Empty>
-                  )}
+                    )}
+                  />
                 </CardContent>
               </Card>
             </div>

@@ -40,7 +40,7 @@ export default defineConfig({
     },
   },
   server: {
-    allowedHosts: ["freya", "localhost", "127.0.0.1"],
+    allowedHosts: ["cachyos-x8664", "freya", "localhost", "127.0.0.1"],
     port: 5173,
     proxy: {
       "/api": "http://127.0.0.1:8000",
