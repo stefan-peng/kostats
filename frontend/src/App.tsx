@@ -179,7 +179,7 @@ type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "expo
 type BusyAction = "snapshot" | "import" | "upload" | "backup" | "restore";
 type ActionErrorKey = "import" | "upload" | "snapshot" | "rename";
 type UiError = { message: string; details?: string };
-type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unknown";
+type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unread" | "unknown";
 type NavItem = { id: View; label: string; icon: typeof Home; badge?: number };
 type ReadingDateFilter = { date: string; bookIds: string[] };
 type DeviceFilter = "all" | string;
@@ -248,6 +248,7 @@ const emptyDashboard: Dashboard = {
     current_streak: 0,
     finished_books: 0,
     reading_books: 0,
+    unread_books: 0,
     abandoned_books: 0,
     highlights: 0,
   },
@@ -904,6 +905,7 @@ function effectiveStatus(book: BookStats) {
 
 function formatStatus(book: BookStats) {
   const status = effectiveStatus(book);
+  if (status === "unread") return "Unread";
   if (status === "complete") return "Finished";
   if (status === "reading") return "Reading";
   if (status === "abandoned") return "Abandoned";
@@ -1975,6 +1977,7 @@ function BooksView({
                   <SelectItem value="all">All books</SelectItem>
                   <SelectItem value="reading">Reading</SelectItem>
                   <SelectItem value="finished">Finished</SelectItem>
+                  <SelectItem value="unread">Unread</SelectItem>
                   <SelectItem value="abandoned">Abandoned</SelectItem>
                   <SelectItem value="unknown">Unknown</SelectItem>
                 </SelectGroup>
@@ -2017,6 +2020,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
         </div>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t pt-3 text-sm" aria-label="Additional reading metrics">
           <span><span className="text-muted-foreground">Current streak</span> <strong className="ml-1 font-medium">{streakLabel}</strong></span>
+          <span><span className="text-muted-foreground">Unread</span> <strong className="ml-1 font-medium">{dashboard.summary.unread_books.toLocaleString()}</strong></span>
           <span><span className="text-muted-foreground">Finished</span> <strong className="ml-1 font-medium">{dashboard.summary.finished_books.toLocaleString()}</strong></span>
           <span><span className="text-muted-foreground">Reading</span> <strong className="ml-1 font-medium">{dashboard.summary.reading_books.toLocaleString()}</strong></span>
           <span><span className="text-muted-foreground">Abandoned</span> <strong className="ml-1 font-medium">{dashboard.summary.abandoned_books.toLocaleString()}</strong></span>

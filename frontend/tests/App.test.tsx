@@ -16,6 +16,7 @@ const emptyDashboard = {
     pages: 0,
     current_streak: 0,
     finished_books: 0,
+    unread_books: 0,
     reading_books: 0,
     abandoned_books: 0,
     highlights: 0,
@@ -111,6 +112,7 @@ const populatedDashboard = {
     pages: 8,
     current_streak: 2,
     finished_books: 1,
+    unread_books: 0,
     reading_books: 1,
     abandoned_books: 0,
     highlights: 2,
@@ -1334,6 +1336,24 @@ describe("App", () => {
 
     expect(sidebar).toHaveAttribute("data-state", "collapsed");
     expect(sidebar).toHaveAttribute("data-collapsible", "icon");
+  });
+
+  it("filters unread books separately from unknown status", async () => {
+    const unread = { ...populatedDashboard.books[0], id: "unread", title: "Unopened book", status: "unread", progress: null, percent_finished: null, time_seconds: 0, last_open: null };
+    const unknown = { ...unread, id: "unknown", title: "Missing history", status: null };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return { mounted: false, candidates: [] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return { ...populatedDashboard, summary: { ...populatedDashboard.summary, unread_books: 1 }, books: [unread, unknown] };
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
+    await selectRadixOption("Status", "Unread");
+    expect(screen.getByText("Unopened book")).toBeInTheDocument();
+    expect(screen.queryByText("Missing history")).not.toBeInTheDocument();
+    await selectRadixOption("Status", "Unknown");
+    expect(screen.getByText("Missing history")).toBeInTheDocument();
+    expect(screen.queryByText("Unopened book")).not.toBeInTheDocument();
   });
 
   it("shows a filterable and sortable full Books view", async () => {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import hashlib
+import json
 import re
 import sqlite3
 import unicodedata
@@ -329,7 +330,7 @@ def build_sidecar_indexes(
 
 def effective_book_status(book: dict[str, Any]) -> str | None:
     status = book.get("status")
-    if status in {"complete", "reading", "abandoned"}:
+    if status in {"complete", "reading", "abandoned", "unread"}:
         return status
     progress = book.get("progress")
     if progress is None:
@@ -483,6 +484,9 @@ def build_dashboard(
             f"b.{quote_identifier(language_col)} AS language" if language_col else "NULL AS language"
         )
 
+        catalog_parts = [part for part in select_parts if part.startswith("b.") or part.startswith("NULL AS")]
+        catalog_parts.append(f"b.{quote_identifier(book_id_col)} AS book_id")
+        catalog_rows = conn.execute(f'SELECT {", ".join(catalog_parts)} FROM book b').fetchall()
         rows = conn.execute(
             f"""
             SELECT {", ".join(select_parts)}
@@ -579,6 +583,27 @@ def build_dashboard(
             if pages > 0:
                 book["total_pages"] = max(book["total_pages"] or 0, pages)
 
+    # Include database-only books and metadata-only books without inventing events.
+    def seed_book(book_id: str, title: Any, authors: Any, md5: Any, series: Any, language: Any, sidecar=None):
+        return {
+            "id": book_id, "title": display_text(title, "Untitled"),
+            "authors": display_text(authors, "Unknown author"),
+            "title_key": real_book_identity_key(title), "authors_key": real_book_identity_key(authors),
+            "md5": display_text(md5, ""), "series": display_text(series, ""),
+            "language": display_text(language, ""), "series_key": optional_metadata_key(series),
+            "language_key": language_identity_key(language), "last_open_timestamp": 0.0,
+            "time_seconds": 0.0, "day_seconds": defaultdict(float), "pages_seen": set(),
+            "max_page": None, "total_pages": None, "sidecar": sidecar,
+        }
+
+    for row in catalog_rows:
+        book_id = str(row["book_id"])
+        if book_id not in books:
+            book = seed_book(book_id, row["title"], row["authors"], row["md5"], row["series"], row["language"], sidecars_by_md5.get(row["md5"]))
+            opened = local_dt(row["last_open"])
+            book["last_open_timestamp"] = opened.timestamp() if opened else 0.0
+            books[book_id] = book
+
     fallback_book_groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for book in books.values():
         if book["sidecar"] is None and book["title_key"] and book["authors_key"]:
@@ -587,6 +612,15 @@ def build_dashboard(
         sidecar = sidecars_by_title_author.get(key)
         if sidecar is not None and len(group) == 1:
             group[0]["sidecar"] = sidecar
+
+    matched_records = {id(book["sidecar"]) for book in books.values() if book["sidecar"] is not None}
+    database_checksums = {book["md5"] for book in books.values() if book["md5"]}
+    for record in sidecar_records:
+        if id(record) in matched_records or record.get("partial_md5_checksum") in database_checksums:
+            continue
+        source = str(record.get("source_path") or record.get("doc_path") or json.dumps(record, sort_keys=True))
+        book_id = "metadata:" + hashlib.sha256(source.encode()).hexdigest()[:24]
+        books[book_id] = seed_book(book_id, record.get("title"), record.get("authors"), record.get("partial_md5_checksum"), record.get("series"), record.get("language"), record)
 
     merger = UnionFind(list(books))
     md5_groups: dict[str, list[str]] = defaultdict(list)
@@ -650,7 +684,14 @@ def build_dashboard(
             ),
         )
         matched_sidecars = [book["sidecar"] for book in group if book["sidecar"] is not None]
-        sidecar = max(matched_sidecars, key=sidecar_sort_key) if matched_sidecars else None
+        sidecar = max(
+            matched_sidecars,
+            key=lambda record: (
+                not record.get("inventory_only", False),
+                record.get("status") != "unread",
+                *sidecar_sort_key(record),
+            ),
+        ) if matched_sidecars else None
         pages_seen = set()
         for book in group:
             pages_seen.update(book["pages_seen"])
@@ -662,6 +703,13 @@ def build_dashboard(
         if total_pages and max_page:
             page_progress = min(100, round((max_page / total_pages) * 100))
         status = sidecar.get("status") if sidecar else None
+        has_activity = any(book["time_seconds"] > 0 for book in group)
+        if status == "unread" and (has_activity or any(book["last_open_timestamp"] for book in group)):
+            status = "reading"
+        if status == "unread" and any(not book["id"].startswith("metadata:") for book in group):
+            status = None
+        if status is None and sidecar and not sidecar.get("inventory_only") and sidecar.get("percent_finished") is None:
+            status = "reading"
         percent_finished = sidecar.get("percent_finished") if sidecar else None
         progress = (
             100
@@ -719,7 +767,7 @@ def build_dashboard(
             "series": display_text(sidecar.get("series"), latest_book["series"]) if sidecar else latest_book["series"],
             "series_index": sidecar.get("series_index") if sidecar else None,
             "language": display_text(sidecar.get("language"), latest_book["language"]) if sidecar else latest_book["language"],
-            "metadata_available": sidecar is not None,
+            "metadata_available": sidecar is not None and not sidecar.get("inventory_only", False),
             "source_book_ids": source_book_ids,
             "source_md5s": source_md5s,
             "merged_count": len(source_book_ids),
@@ -742,11 +790,12 @@ def build_dashboard(
         book["recent_sessions"] = list(reversed(sessions_by_book.get(book["id"], [])))[:10]
 
     book_stats = sorted(book_stats, key=lambda item: item["last_open"] or "", reverse=True)
-    recent_books = book_stats[:20]
-    top_books = sorted(book_stats, key=lambda item: item["time_seconds"], reverse=True)[:10]
+    active_books = [book for book in book_stats if book["time_seconds"] > 0]
+    recent_books = active_books[:20]
+    top_books = sorted(active_books, key=lambda item: item["time_seconds"], reverse=True)[:10]
     status_counts = {
         status: sum(1 for book in book_stats if effective_book_status(book) == status)
-        for status in ("complete", "reading", "abandoned")
+        for status in ("complete", "reading", "abandoned", "unread")
     }
 
     sorted_days = sorted(day_seconds)
@@ -767,6 +816,7 @@ def build_dashboard(
             "current_streak": current_streak(set(day_seconds), today=today),
             "finished_books": status_counts["complete"],
             "reading_books": status_counts["reading"],
+            "unread_books": status_counts["unread"],
             "abandoned_books": status_counts["abandoned"],
             "highlights": sum(book["highlight_count"] for book in book_stats),
         },
@@ -849,6 +899,7 @@ def empty_dashboard() -> dict[str, Any]:
             "current_streak": 0,
             "finished_books": 0,
             "reading_books": 0,
+            "unread_books": 0,
             "abandoned_books": 0,
             "highlights": 0,
         },
@@ -967,6 +1018,8 @@ def aggregate_dashboards(
     merged_books: list[dict[str, Any]] = []
     aggregate_id_by_device_book_id: dict[str, str] = {}
     for group in books_by_key.values():
+        evidence = [item for item in group if effective_book_status(item) != "unread" or item.get("time_seconds", 0) > 0]
+        status_book = max(evidence or group, key=lambda item: (item.get("status_modified") or item.get("last_open") or "", item.get("id") or ""))
         latest = max(group, key=lambda item: (item.get("last_open") or "", item.get("id") or ""))
         position_book = max(
             group,
@@ -992,7 +1045,7 @@ def aggregate_dashboards(
         )
         estimated_remaining_seconds = None
         if (
-            effective_book_status(latest) == "reading"
+            effective_book_status(status_book) == "reading"
             and pace_seconds_per_page is not None
             and remaining_pages is not None
         ):
@@ -1025,6 +1078,8 @@ def aggregate_dashboards(
                 activity[device_id] = seconds_to_minutes(activity_device_seconds[activity["date"]].get(device_id, 0.0))
         merged = {
             **latest,
+            **{key: status_book.get(key) for key in ("status", "status_modified", "progress", "percent_finished")},
+            "metadata_available": any(item.get("metadata_available") for item in group),
             "id": source_book_ids[0] if len(source_book_ids) <= 1 else stable_merged_book_id(source_book_ids),
             "time_seconds": round(time_seconds, 2),
             "time_label": format_duration(time_seconds),
@@ -1100,7 +1155,7 @@ def aggregate_dashboards(
     max_day_seconds = max(day_seconds.values(), default=0.0)
     status_counts = {
         status: sum(1 for book in merged_books if effective_book_status(book) == status)
-        for status in ("complete", "reading", "abandoned")
+        for status in ("complete", "reading", "abandoned", "unread")
     }
     latest_snapshot = max(snapshots, key=lambda item: item.imported_at)
 
@@ -1123,6 +1178,7 @@ def aggregate_dashboards(
             "current_streak": current_streak(set(day_seconds), today=today),
             "finished_books": status_counts["complete"],
             "reading_books": status_counts["reading"],
+            "unread_books": status_counts["unread"],
             "abandoned_books": status_counts["abandoned"],
             "highlights": sum(int(book.get("highlight_count") or 0) for book in merged_books),
         },
@@ -1187,7 +1243,7 @@ def aggregate_dashboards(
                     "title": item["title"],
                     "hours": seconds_to_hours(float(item.get("time_seconds") or 0)),
                 }
-                for item in sorted(merged_books, key=lambda item: item["time_seconds"], reverse=True)[:10]
+                for item in sorted((book for book in merged_books if book["time_seconds"] > 0), key=lambda item: item["time_seconds"], reverse=True)[:10]
             ],
             "calendar": {
                 "start_date": sorted_days[0] if sorted_days else None,
@@ -1214,5 +1270,5 @@ def aggregate_dashboards(
             },
         },
         "books": merged_books,
-        "recent_books": merged_books[:20],
+        "recent_books": [book for book in merged_books if book["time_seconds"] > 0][:20],
     }

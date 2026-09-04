@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .library import inventory
 from .lua_table import LuaTableError, parse_lua_table
 
 
@@ -138,17 +139,48 @@ def sidecar_candidates(volume: Path) -> list[Path]:
     return sorted(candidates)
 
 
+def book_sidecar_paths(volume: Path, book: dict[str, Any]) -> set[Path]:
+    """Identify KOReader metadata locations even when their contents cannot be read."""
+    document = Path(book["source_path"])
+    filename = f"metadata{document.suffix}.lua"
+    paths = {document.with_suffix(".sdr") / filename}
+    koreader = volume / ".adds/koreader"
+    relative = document.relative_to(volume)
+    for mount in ("/mnt/onboard", "/mnt/sd"):
+        device_path = Path(mount) / relative
+        paths.add(koreader / "docsettings" / device_path.with_suffix(".sdr").as_posix().lstrip("/") / filename)
+        history_name = f"[{device_path.parent.as_posix().replace('/', '#')}#] {document.name}.lua"
+        paths.add(koreader / "history" / history_name)
+    checksum = book.get("partial_md5_checksum")
+    if checksum:
+        paths.add(koreader / "hashdocsettings" / checksum[:2] / f"{checksum}.sdr" / filename)
+    return paths
+
+
 def build_sidecar_snapshot(volume: Path) -> dict[str, Any]:
     records = []
     malformed = 0
-    for path in sidecar_candidates(volume):
+    candidates = set(sidecar_candidates(volume))
+    for path in sorted(candidates):
         record = normalize_sidecar(path)
         if record is None:
             malformed += 1
         else:
             records.append(record)
+    # Keep inventory separate from sidecars: absence is only evidence when the
+    # device was scanned successfully and metadata was readable.
+    library = inventory(volume)
+    by_path = {record.get("doc_path"): record for record in records if record.get("doc_path")}
+    for book in library:
+        matching = by_path.get(book["doc_path"])
+        if matching:
+            # Use the stored KOReader identity when document content changes (e.g. covers).
+            book["partial_md5_checksum"] = matching.get("partial_md5_checksum")
+        has_sidecar = bool(book_sidecar_paths(volume, book) & candidates)
+        book["status"] = None if has_sidecar or not book["partial_md5_checksum"] else "unread"
     return {
-        "version": 1,
+        "library": library,
+        "version": 2,
         "records": records,
         "malformed_count": malformed,
     }
@@ -170,4 +202,12 @@ def load_sidecar_snapshot(path: Path | None) -> list[dict[str, Any]]:
     except (OSError, UnicodeError, json.JSONDecodeError):
         return []
     records = payload.get("records", []) if isinstance(payload, dict) else []
-    return [record for record in records if isinstance(record, dict)]
+    records = [record for record in records if isinstance(record, dict)]
+    library = payload.get("library", []) if isinstance(payload, dict) else []
+    # Sidecars remain authoritative; inventory supplies entries for other files.
+    checksums = {record.get("partial_md5_checksum") for record in records if record.get("partial_md5_checksum")}
+    paths = {record.get("doc_path") for record in records if record.get("doc_path")}
+    for book in library:
+        if isinstance(book, dict) and book.get("partial_md5_checksum") not in checksums and book.get("doc_path") not in paths:
+            records.append(book)
+    return records

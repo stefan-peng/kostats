@@ -140,7 +140,7 @@ export type BookStats = {
   total_pages: number | null;
   progress: number | null;
   percent_finished: number | null;
-  status: "reading" | "complete" | "abandoned" | null;
+  status: "reading" | "complete" | "abandoned" | "unread" | null;
   status_modified: string | null;
   highlight_count: number;
   note_count: number;
@@ -188,6 +188,7 @@ export type Dashboard = {
     current_streak: number;
     finished_books: number;
     reading_books: number;
+    unread_books: number;
     abandoned_books: number;
     highlights: number;
   };

@@ -505,7 +505,7 @@ def test_manual_and_auto_import_populate_cover_cache(tmp_path: Path) -> None:
         assert "test-md5" in manifest
 
 
-def test_unchanged_auto_import_repairs_cover_without_snapshot(tmp_path: Path) -> None:
+def test_added_book_triggers_snapshot_and_repairs_cover(tmp_path: Path) -> None:
     volume = tmp_path / "KOBOeReader"
     db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
     create_db(db_path)
@@ -518,9 +518,9 @@ def test_unchanged_auto_import_repairs_cover_without_snapshot(tmp_path: Path) ->
 
     second = auto_import_from_kobo(store, volume)
 
-    assert second["reason"] == "unchanged"
-    assert second["snapshot"]["id"] == first["snapshot"]["id"]
-    assert len(store.list_snapshots()) == 1
+    assert second["reason"] == "changed"
+    assert second["snapshot"]["id"] != first["snapshot"]["id"]
+    assert len(store.list_snapshots()) == 2
     assert (store.root / "covers/manifest.json").exists()
 
 

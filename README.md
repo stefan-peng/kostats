@@ -4,6 +4,10 @@ Local KOReader reading statistics dashboard for Kobo devices.
 
 `kostats` copies KOReader's `settings/statistics.sqlite3` database and normalized `.sdr` book metadata from a mounted Kobo into local timestamped snapshots, then reads only the local snapshots for dashboard views.
 
+Device snapshots also inventory supported book files outside hidden/system directories, without copying their contents. The Books view includes inventory-only, metadata-only, and statistics-only books. **Unread** means a scanned file has no known opening or reading evidence; missing or unreadable metadata remains **Unknown**. Zero reading time or 0% progress alone does not mean unread. Reading evidence from another device takes precedence over an unopened copy.
+
+EPUB titles and authors come from embedded metadata; other formats use filenames when no KOReader metadata exists. Inventory changes trigger a new snapshot. Reading time, sessions, calendar activity, and recent/top books remain based on recorded activity. Existing snapshots and database-only uploads cannot discover never-opened files; connect and import the device to populate unread books.
+
 Recovery backups use format v2 by default. They preserve KOReader settings, statistics, vocabulary, dictionaries, sidecars, and optional extensions without copying EPUB, PDF, or other book payloads. Format v2 stores dictionary payloads in the local content-addressed store alongside the ZIP archives, so the `data/` directory must stay together. Existing format v1 backups, which store dictionaries inside each ZIP, remain restorable. Restoring a recovery backup modifies the mounted Kobo only after an explicit preview and confirmation, and first creates a safety backup of the device's current state.
 
 ## Development
