@@ -57,7 +57,6 @@ export type AutoImportResult = {
   snapshot: Snapshot | null;
   device: DeviceStatus;
   covers_changed?: boolean;
-  dashboard?: Dashboard;
 };
 
 export type RecoveryBackup = {

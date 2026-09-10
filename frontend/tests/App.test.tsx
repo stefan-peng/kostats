@@ -1189,6 +1189,41 @@ describe("App", () => {
     await waitFor(() => expect(autoImportUrls).toHaveLength(2));
   });
 
+  it("clears a polling import failure after an unchanged retry without reloading data", async () => {
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    let failImport = false;
+    let dashboardRequests = 0;
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) {
+        if (failImport) return new Error("Device read failed");
+        return { imported: false, reason: "unchanged", snapshot: autoSnapshot, device: mountedStatus };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [autoSnapshot] };
+      if (url.startsWith("/api/dashboard")) dashboardRequests += 1;
+      return autoDashboard;
+    });
+    render(<App />);
+    expect(await screen.findByText("Device matches latest snapshot")).toBeInTheDocument();
+    failImport = true;
+    await act(async () => { vi.advanceTimersByTime(15000); });
+    expect(await screen.findByText("Kobo update failed")).toBeInTheDocument();
+    expect(screen.queryByText("Device matches latest snapshot")).not.toBeInTheDocument();
+    expect(screen.queryByText("Dashboard refresh failed")).not.toBeInTheDocument();
+    failImport = false;
+    await act(async () => { vi.advanceTimersByTime(15000); });
+    expect(await screen.findByText("Device matches latest snapshot")).toBeInTheDocument();
+    expect(screen.queryByText("Kobo update failed")).not.toBeInTheDocument();
+    expect(dashboardRequests).toBe(1);
+  });
+
   it("makes sidebar sections navigable", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {

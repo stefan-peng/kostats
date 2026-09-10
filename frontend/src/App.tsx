@@ -2893,6 +2893,22 @@ export default function App() {
     setDevice(nextDeviceStatus);
   }
 
+  async function checkAutoImport() {
+    try {
+      const result = await autoImportFromKobo();
+      if (!result.device) throw new Error("Auto-import response did not include device status");
+      setAutoImportError(null);
+      return result;
+    } catch (err) {
+      setLatestSnapshotMatchesDevice(false);
+      setAutoImportError({
+        message: "Kobo could not be updated. The last successful import is still being shown.",
+        details: err instanceof Error ? err.message : "Could not import from Kobo",
+      });
+      return null;
+    }
+  }
+
   async function refreshDeviceStatus() {
     if (deviceStatusRefreshInFlight.current) return;
     deviceStatusRefreshInFlight.current = true;
@@ -2904,8 +2920,8 @@ export default function App() {
         nextDeviceStatus.database_found &&
         !nextDeviceStatus.permission_error;
       if (readyToImport) {
-        const autoResult = await autoImportFromKobo();
-        if (!autoResult.device) throw new Error("Auto-import response did not include device status");
+        const autoResult = await checkAutoImport();
+        if (!autoResult) return;
         publishDeviceStatus(autoResult.device);
         const matchesDevice =
           autoResult.snapshot !== null && (autoResult.reason === "changed" || autoResult.reason === "unchanged");

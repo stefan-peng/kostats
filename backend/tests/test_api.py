@@ -325,12 +325,21 @@ def test_auto_kobo_import_endpoint_skips_unchanged_database(monkeypatch, tmp_pat
     DeviceRegistry(data_root).ensure_for_volume(volume)
     client = TestClient(app)
 
+    dashboard_builds = []
+
+    def counted_build_dashboard(*args, **kwargs):
+        dashboard_builds.append(True)
+        return build_dashboard(*args, **kwargs)
+
+    monkeypatch.setattr(main_module, "build_dashboard", counted_build_dashboard)
     first = client.post("/api/import/kobo/auto")
     second = client.post("/api/import/kobo/auto")
 
     assert first.status_code == 200
     assert first.json()["imported"] is True
-    assert first.json()["dashboard"]["recent_books"][0]["title"] == "Kindred"
+    assert "dashboard" not in first.json()
+    assert dashboard_builds == []
+    assert client.get("/api/dashboard").json()["recent_books"][0]["title"] == "Kindred"
     assert second.status_code == 200
     assert second.json()["imported"] is False
     assert second.json()["reason"] == "unchanged"
