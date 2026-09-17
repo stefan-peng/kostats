@@ -1106,11 +1106,13 @@ function DeviceBanner({
     return (
       <div
         aria-label="Device import status"
-        className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm"
+        className="compact-device-status flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm"
       >
-        <Badge variant={stateVariant}>{stateLabel}</Badge>
-        <span className="font-medium">{activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div className="compact-device-status__summary flex min-w-0 items-center gap-2">
+          <Badge className="shrink-0" variant={stateVariant}>{stateLabel}</Badge>
+          <span className="truncate font-medium">{activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
+        </div>
+        <div className="compact-device-status__actions ml-auto flex flex-wrap items-center gap-2">
           {deviceFilter != null && onDeviceFilterChange ? (
             <DeviceSelector devices={devices} value={deviceFilter} onChange={onDeviceFilterChange} />
           ) : null}
@@ -3223,10 +3225,12 @@ export default function App() {
           <SidebarRail />
         </Sidebar>
         <SidebarInset>
-          <header aria-label="Page toolbar" className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
-            <span className="font-medium">{navItems.find((item) => item.id === activeView)?.label}</span>
+          <header aria-label="Page toolbar" className="page-toolbar flex min-h-14 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2">
+            <div className="page-toolbar__heading flex min-w-0 items-center gap-2">
+              <SidebarTrigger className="-ml-1" />
+              <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
+              <span className="truncate font-medium">{navItems.find((item) => item.id === activeView)?.label}</span>
+            </div>
             <DeviceBanner
               status={device}
               devices={devices}
