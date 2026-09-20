@@ -21,9 +21,12 @@ from .storage import SnapshotStore, hash_file
 
 
 app = FastAPI(title="kostats", version="0.1.0")
+frontend_origins = ["http://127.0.0.1:5173", "http://localhost:5173"]
+if configured_origin := os.environ.get("KOSTATS_FRONTEND_ORIGIN"):
+    frontend_origins.append(configured_origin)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=frontend_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

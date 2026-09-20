@@ -7,22 +7,22 @@ from fastapi.testclient import TestClient
 import backend.app.prod as prod
 
 
-def test_build_frontend_requires_npm(monkeypatch, capsys) -> None:
+def test_build_frontend_requires_npm(monkeypatch, caplog) -> None:
     monkeypatch.setattr(prod.shutil, "which", lambda _name: None)
 
     assert prod.build_frontend() == 1
-    assert "npm is required" in capsys.readouterr().err
+    assert "npm is required" in caplog.text
 
 
-def test_build_frontend_requires_dependencies(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_build_frontend_requires_dependencies(monkeypatch, tmp_path: Path, caplog) -> None:
     monkeypatch.setattr(prod.shutil, "which", lambda _name: "npm")
     monkeypatch.setattr(prod, "FRONTEND", tmp_path / "frontend")
 
     assert prod.build_frontend() == 1
-    assert "Frontend dependencies are missing" in capsys.readouterr().err
+    assert "Frontend dependencies are missing" in caplog.text
 
 
-def test_build_frontend_propagates_build_failure(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_build_frontend_propagates_build_failure(monkeypatch, tmp_path: Path, caplog) -> None:
     frontend = tmp_path / "frontend"
     (frontend / "node_modules").mkdir(parents=True)
     monkeypatch.setattr(prod.shutil, "which", lambda _name: "npm")
@@ -30,7 +30,7 @@ def test_build_frontend_propagates_build_failure(monkeypatch, tmp_path: Path, ca
     monkeypatch.setattr(prod.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=7))
 
     assert prod.build_frontend() == 7
-    assert "Frontend build failed with exit code 7" in capsys.readouterr().err
+    assert "Frontend build failed with exit code 7" in caplog.text
 
 
 def test_static_frontend_preserves_api_routes(tmp_path: Path) -> None:
