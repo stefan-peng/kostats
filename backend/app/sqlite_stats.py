@@ -618,6 +618,12 @@ def build_dashboard(
     for record in sidecar_records:
         if id(record) in matched_records or record.get("partial_md5_checksum") in database_checksums:
             continue
+        # Opaque cache sidecars can retain a status without any usable book identity.
+        if not any(
+            display_text(record.get(field), "")
+            for field in ("title", "authors", "partial_md5_checksum")
+        ):
+            continue
         source = str(record.get("source_path") or record.get("doc_path") or json.dumps(record, sort_keys=True))
         book_id = "metadata:" + hashlib.sha256(source.encode()).hexdigest()[:24]
         books[book_id] = seed_book(book_id, record.get("title"), record.get("authors"), record.get("partial_md5_checksum"), record.get("series"), record.get("language"), record)

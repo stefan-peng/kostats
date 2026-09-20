@@ -787,6 +787,40 @@ def test_sidecar_unique_title_author_fallback_and_missing_metadata(tmp_path: Pat
     assert unmatched["progress"] == 9
 
 
+def test_identityless_unmatched_sidecars_are_ignored(tmp_path: Path) -> None:
+    db_path = tmp_path / "statistics.sqlite3"
+    create_current_db(db_path)
+    snapshot = write_sidecar_snapshot(
+        db_path,
+        [
+            {
+                "source_path": "docsettings/tmp/kobo.koplugin.cache/opaque.sdr/metadata.epub.lua",
+                "doc_path": "/tmp/kobo.koplugin.cache/opaque",
+                "title": None,
+                "authors": None,
+                "partial_md5_checksum": None,
+                "status": "complete",
+                "percent_finished": 1,
+            },
+            {
+                "source_path": "docsettings/articles/useful.sdr/metadata.epub.lua",
+                "title": "Useful article",
+                "authors": None,
+                "partial_md5_checksum": None,
+                "status": "reading",
+                "percent_finished": 0.25,
+            },
+        ],
+    )
+
+    dashboard = build_dashboard(db_path, snapshot)
+
+    assert all(book["title"] != "Untitled" for book in dashboard["books"])
+    article = next(book for book in dashboard["books"] if book["title"] == "Useful article")
+    assert article["authors"] == "Unknown author"
+    assert article["status"] == "reading"
+
+
 def test_missing_sidecar_status_uses_page_progress_for_summary_counts(tmp_path: Path) -> None:
     db_path = tmp_path / "statistics.sqlite3"
     create_current_db(db_path)

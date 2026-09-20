@@ -1391,6 +1391,29 @@ describe("App", () => {
     expect(screen.queryByText("Unopened book")).not.toBeInTheDocument();
   });
 
+  it("filters unfinished books to reading and unread statuses", async () => {
+    const reading = { ...populatedDashboard.books[0], id: "reading", title: "Started book" };
+    const unread = { ...reading, id: "unread", title: "Unopened book", status: "unread", progress: null, percent_finished: null };
+    const finished = { ...reading, id: "finished", title: "Completed book", status: "complete", progress: 100 };
+    const abandoned = { ...reading, id: "abandoned", title: "Set aside book", status: "abandoned" };
+    const unknown = { ...unread, id: "unknown", title: "Missing history", status: null };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return { mounted: false, candidates: [] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return { ...populatedDashboard, books: [reading, unread, finished, abandoned, unknown] };
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
+
+    await selectRadixOption("Status", "Unfinished");
+
+    expect(screen.getByText("Started book")).toBeInTheDocument();
+    expect(screen.getByText("Unopened book")).toBeInTheDocument();
+    expect(screen.queryByText("Completed book")).not.toBeInTheDocument();
+    expect(screen.queryByText("Set aside book")).not.toBeInTheDocument();
+    expect(screen.queryByText("Missing history")).not.toBeInTheDocument();
+  });
+
   it("shows a filterable and sortable full Books view", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
@@ -1563,7 +1586,7 @@ describe("App", () => {
     expect(tableRegion).not.toHaveStyle({ maxHeight: "147px" });
   });
 
-  it("paginates long tables outside the horizontal scroll region and resets after filtering", async () => {
+  it("preserves Books pagination across background refreshes and resets after filtering", async () => {
     const books = Array.from({ length: 21 }, (_, index) => ({
       ...populatedDashboard.books[0],
       id: `book-${index + 1}`,
@@ -1574,18 +1597,35 @@ describe("App", () => {
       cover_url: null,
       merged_count: 1,
     }));
+    const mountedStatus = {
+      mount_path: "/Volumes/KOBOeReader",
+      mounted: true,
+      database_found: true,
+      selected_path: "/Volumes/KOBOeReader/.adds/koreader/settings/statistics.sqlite3",
+      permission_error: null,
+      candidates: [],
+    };
+    let autoImportRequests = 0;
+    let dashboardRequests = 0;
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
+        return mountedStatus;
+      }
+      if (url.startsWith("/api/import/kobo/auto")) {
+        autoImportRequests += 1;
         return {
-          mount_path: "/Volumes/KOBOeReader",
-          mounted: false,
-          database_found: false,
-          selected_path: null,
-          permission_error: null,
-          candidates: [],
+          imported: false,
+          covers_changed: autoImportRequests > 1,
+          reason: "unchanged",
+          snapshot: populatedDashboard.snapshot,
+          device: mountedStatus,
         };
       }
       if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      if (url.startsWith("/api/dashboard")) {
+        dashboardRequests += 1;
+        return { ...populatedDashboard, books: dashboardRequests >= 3 ? books.slice(0, 20) : books };
+      }
       return { ...populatedDashboard, books };
     });
 
@@ -1603,6 +1643,21 @@ describe("App", () => {
     expect(screen.getByText("Book 021")).toBeInTheDocument();
     expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
     expect(tableRegion.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+    });
+    await waitFor(() => expect(dashboardRequests).toBe(2));
+    expect(screen.getByText("Book 021")).toBeInTheDocument();
+    expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+    });
+    await waitFor(() => expect(dashboardRequests).toBe(3));
+    expect(screen.getByText("Book 001")).toBeInTheDocument();
+    expect(screen.queryByText("Book 021")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Page \d of \d/)).not.toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Search"), "Book 001");
     expect(screen.getByText("Book 001")).toBeInTheDocument();

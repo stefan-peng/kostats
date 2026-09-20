@@ -179,7 +179,7 @@ type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "expo
 type BusyAction = "snapshot" | "import" | "upload" | "backup" | "restore";
 type ActionErrorKey = "import" | "upload" | "snapshot" | "rename";
 type UiError = { message: string; details?: string };
-type BookProgressFilter = "all" | "reading" | "finished" | "abandoned" | "unread" | "unknown";
+type BookProgressFilter = "all" | "unfinished" | "reading" | "finished" | "abandoned" | "unread" | "unknown";
 type NavItem = { id: View; label: string; icon: typeof Home; badge?: number };
 type ReadingDateFilter = { date: string; bookIds: string[] };
 type DeviceFilter = "all" | string;
@@ -933,6 +933,7 @@ function formatSourceRecords(book: BookStats) {
 function matchesProgressFilter(book: BookStats, filter: BookProgressFilter) {
   if (filter === "all") return true;
   const status = effectiveStatus(book);
+  if (filter === "unfinished") return status === "reading" || status === "unread";
   if (filter === "unknown") return status == null;
   if (filter === "finished") return status === "complete";
   return status === filter;
@@ -1726,6 +1727,7 @@ function BooksView({
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({});
   const [sorting, setSorting] = useState<SortingState>([{ id: "last_open", desc: true }]);
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: tablePageSize });
   const [selectedBook, setSelectedBook] = useState<BookStats | null>(null);
   const dateFilteredBooks = useMemo(() => {
     if (!readingDate) return books;
@@ -1888,12 +1890,17 @@ function BooksView({
       columnVisibility,
       columnSizing,
       globalFilter,
+      pagination,
     },
-    onSortingChange: setSorting,
+    onSortingChange: (updater) => {
+      setSorting(updater);
+      setPagination((current) => ({ ...current, pageIndex: 0 }));
+    },
     onColumnFiltersChange: setColumnFilters,
     onColumnVisibilityChange: setColumnVisibility,
     onColumnSizingChange: setColumnSizing,
     onGlobalFilterChange: setGlobalFilter,
+    onPaginationChange: setPagination,
     globalFilterFn: (row, _columnId, filterValue) => {
       const query = String(filterValue ?? "").trim().toLocaleLowerCase();
       if (!query) return true;
@@ -1905,11 +1912,18 @@ function BooksView({
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    initialState: { pagination: { pageIndex: 0, pageSize: tablePageSize } },
+    autoResetPageIndex: false,
     columnResizeMode: "onChange",
   });
 
   const filteredRows = table.getFilteredRowModel().rows;
+  const filteredPageCount = Math.ceil(filteredRows.length / pagination.pageSize);
+  useEffect(() => {
+    const lastPageIndex = Math.max(0, filteredPageCount - 1);
+    setPagination((current) => (
+      current.pageIndex <= lastPageIndex ? current : { ...current, pageIndex: lastPageIndex }
+    ));
+  }, [filteredPageCount]);
   const progressFilter =
     (table.getColumn("status")?.getFilterValue() as BookProgressFilter | undefined) ?? "all";
   const totalTimeSeconds = filteredRows.reduce((total, row) => total + row.original.time_seconds, 0);
@@ -1958,7 +1972,10 @@ function BooksView({
                 aria-label="Search"
                 className="pl-8"
                 value={globalFilter}
-                onChange={(event) => setGlobalFilter(event.target.value)}
+                onChange={(event) => {
+                  setGlobalFilter(event.target.value);
+                  setPagination((current) => ({ ...current, pageIndex: 0 }));
+                }}
                 placeholder="Title or author"
                 type="search"
               />
@@ -1969,6 +1986,7 @@ function BooksView({
               value={progressFilter}
               onValueChange={(value) => {
                 table.getColumn("status")?.setFilterValue(value === "all" ? undefined : value);
+                setPagination((current) => ({ ...current, pageIndex: 0 }));
               }}
             >
               <SelectTrigger id="book-status" aria-label="Status" className="w-full">
@@ -1977,6 +1995,7 @@ function BooksView({
               <SelectContent>
                 <SelectGroup>
                   <SelectItem value="all">All books</SelectItem>
+                  <SelectItem value="unfinished">Unfinished</SelectItem>
                   <SelectItem value="reading">Reading</SelectItem>
                   <SelectItem value="finished">Finished</SelectItem>
                   <SelectItem value="unread">Unread</SelectItem>
