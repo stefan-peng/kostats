@@ -2510,7 +2510,7 @@ function CalendarView({
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <CardTitle>Calendar</CardTitle>
           <CardDescription>{dateRange}</CardDescription>
