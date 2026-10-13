@@ -2877,6 +2877,7 @@ export default function App() {
   const deviceStatusKey = useRef<string | null>(null);
   const latestDeviceStatus = useRef<DeviceStatus | null>(null);
   const deviceStatusRefreshInFlight = useRef(false);
+  const dashboardRefreshId = useRef(0);
   const hasUsableDashboard = useRef(false);
 
   function clearActionError(key: ActionErrorKey) {
@@ -2914,13 +2915,15 @@ export default function App() {
     setDevice(nextDeviceStatus);
   }
 
-  async function checkAutoImport() {
+  async function checkAutoImport(refreshId: number) {
     try {
       const result = await autoImportFromKobo();
+      if (refreshId !== dashboardRefreshId.current) return null;
       if (!result.device) throw new Error("Auto-import response did not include device status");
       setAutoImportError(null);
       return result;
     } catch (err) {
+      if (refreshId !== dashboardRefreshId.current) return null;
       setLatestSnapshotMatchesDevice(false);
       setAutoImportError({
         message: "Kobo could not be updated. The last successful import is still being shown.",
@@ -2933,71 +2936,84 @@ export default function App() {
   async function refreshDeviceStatus() {
     if (deviceStatusRefreshInFlight.current) return;
     deviceStatusRefreshInFlight.current = true;
+    const refreshId = dashboardRefreshId.current;
     try {
       const nextDeviceStatus = await getDeviceStatus();
+      if (refreshId !== dashboardRefreshId.current) return;
       publishDeviceStatus(nextDeviceStatus);
       const readyToImport =
         nextDeviceStatus.mounted &&
         nextDeviceStatus.database_found &&
         !nextDeviceStatus.permission_error;
       if (readyToImport) {
-        const autoResult = await checkAutoImport();
+        const autoResult = await checkAutoImport(refreshId);
         if (!autoResult) return;
         publishDeviceStatus(autoResult.device);
         const matchesDevice =
           autoResult.snapshot !== null && (autoResult.reason === "changed" || autoResult.reason === "unchanged");
         setLatestSnapshotMatchesDevice(matchesDevice);
         if (autoResult.imported || autoResult.covers_changed) {
-          await refresh(true, matchesDevice);
+          await refresh(true, matchesDevice).catch(reportRefreshError);
         }
       } else {
         setLatestSnapshotMatchesDevice(false);
       }
+    } catch (err) {
+      if (refreshId === dashboardRefreshId.current) throw err;
     } finally {
       deviceStatusRefreshInFlight.current = false;
     }
   }
 
   async function refresh(skipAutoImport = false, knownDeviceMatch = false) {
-    let deviceStatus = await getDeviceStatus();
-    let nextAutoImportError: UiError | null = null;
-    let nextLatestSnapshotMatchesDevice = knownDeviceMatch;
-    if (!skipAutoImport && deviceStatus.mounted && deviceStatus.database_found && !deviceStatus.permission_error) {
-      try {
-        const autoResult = await autoImportFromKobo();
-        if (!autoResult.device) throw new Error("Auto-import response did not include device status");
-        deviceStatus = autoResult.device;
-        nextLatestSnapshotMatchesDevice =
-          autoResult.snapshot !== null && (autoResult.reason === "changed" || autoResult.reason === "unchanged");
-      } catch (err) {
-        // Background Kobo sync is a UI boundary: show the import failure while keeping local snapshots visible.
-        nextAutoImportError = {
-          message: "Kobo could not be updated. The last successful import is still being shown.",
-          details: err instanceof Error ? err.message : "Could not import from Kobo",
-        };
+    const refreshId = ++dashboardRefreshId.current;
+    try {
+      let deviceStatus = await getDeviceStatus();
+      if (refreshId !== dashboardRefreshId.current) return;
+      let nextAutoImportError: UiError | null = null;
+      let nextLatestSnapshotMatchesDevice = knownDeviceMatch;
+      if (!skipAutoImport && deviceStatus.mounted && deviceStatus.database_found && !deviceStatus.permission_error) {
+        try {
+          const autoResult = await autoImportFromKobo();
+          if (!autoResult.device) throw new Error("Auto-import response did not include device status");
+          deviceStatus = autoResult.device;
+          nextLatestSnapshotMatchesDevice =
+            autoResult.snapshot !== null && (autoResult.reason === "changed" || autoResult.reason === "unchanged");
+        } catch (err) {
+          // Background Kobo sync is a UI boundary: show the import failure while keeping local snapshots visible.
+          nextAutoImportError = {
+            message: "Kobo could not be updated. The last successful import is still being shown.",
+            details: err instanceof Error ? err.message : "Could not import from Kobo",
+          };
+        }
       }
+      if (refreshId !== dashboardRefreshId.current) return;
+      const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
+      const [deviceData, dashboardData, snapshotData, backupData] = await Promise.all([
+        getDevices(),
+        getDashboard(dashboardSnapshotId, deviceFilter),
+        getSnapshots(deviceFilter),
+        getBackups(deviceFilter),
+      ]);
+      if (refreshId !== dashboardRefreshId.current) return;
+      const lastSuccessfulSnapshot = snapshotData.snapshots[0] ?? dashboardData.snapshot;
+      if (nextAutoImportError && lastSuccessfulSnapshot) {
+        nextAutoImportError.message = `Kobo could not be updated. The last successful import from ${formatDateTime(lastSuccessfulSnapshot.imported_at)} is still being shown.`;
+      }
+      publishDeviceStatus(deviceStatus);
+      setDevices(deviceData.devices);
+      publishDashboard(dashboardData);
+      setSnapshots(snapshotData.snapshots);
+      setBackups(backupData.backups);
+      setAutoImportError(nextAutoImportError);
+      setLatestSnapshotMatchesDevice(nextLatestSnapshotMatchesDevice);
+    } catch (err) {
+      if (refreshId === dashboardRefreshId.current) throw err;
     }
-    const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
-    const [deviceData, dashboardData, snapshotData, backupData] = await Promise.all([
-      getDevices(),
-      getDashboard(dashboardSnapshotId, deviceFilter),
-      getSnapshots(deviceFilter),
-      getBackups(deviceFilter),
-    ]);
-    const lastSuccessfulSnapshot = snapshotData.snapshots[0] ?? dashboardData.snapshot;
-    if (nextAutoImportError && lastSuccessfulSnapshot) {
-      nextAutoImportError.message = `Kobo could not be updated. The last successful import from ${formatDateTime(lastSuccessfulSnapshot.imported_at)} is still being shown.`;
-    }
-    publishDeviceStatus(deviceStatus);
-    setDevices(deviceData.devices);
-    publishDashboard(dashboardData);
-    setSnapshots(snapshotData.snapshots);
-    setBackups(backupData.backups);
-    setAutoImportError(nextAutoImportError);
-    setLatestSnapshotMatchesDevice(nextLatestSnapshotMatchesDevice);
   }
 
   async function loadSnapshot(snapshotId: string) {
+    ++dashboardRefreshId.current;
     setBusyAction("snapshot");
     clearActionError("snapshot");
     setAutoImportError(null);
@@ -3021,7 +3037,10 @@ export default function App() {
     const id = window.setInterval(() => {
       refreshDeviceStatus().catch(reportRefreshError);
     }, deviceStatusPollMs);
-    return () => window.clearInterval(id);
+    return () => {
+      ++dashboardRefreshId.current;
+      window.clearInterval(id);
+    };
   }, [deviceFilter]);
 
   useEffect(() => {

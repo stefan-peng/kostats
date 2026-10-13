@@ -593,6 +593,50 @@ describe("App", () => {
     expect(screen.getByLabelText("Import device")).toHaveTextContent("Auto-detected");
   });
 
+  it.each(["success", "failure"])("ignores a stale device refresh %s after switching devices", async (outcome) => {
+    let resolvePrimary!: (value: unknown) => void;
+    let rejectPrimary!: (reason: Error) => void;
+    const delayedPrimary = new Promise((resolve, reject) => {
+      resolvePrimary = resolve;
+      rejectPrimary = reject;
+    });
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return {
+        mounted: false, database_found: false, selected_path: null,
+        mount_path: null, permission_error: null, candidates: [],
+      };
+      if (url.startsWith("/api/snapshots")) return {
+        snapshots: url.includes("device_id=travel-kobo") ? [olderSnapshot] : [populatedDashboard.snapshot],
+      };
+      if (url.startsWith("/api/dashboard") && url.includes("device_id=primary-kobo")) return delayedPrimary;
+      if (url.startsWith("/api/dashboard") && url.includes("device_id=travel-kobo")) return olderDashboard;
+      return populatedDashboard;
+    });
+
+    render(<App />);
+    await screen.findByText("Recent books");
+    await selectRadixOption("Device filter", "Primary Kobo");
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      String(url).startsWith("/api/dashboard") && String(url).includes("device_id=primary-kobo"),
+    )).toBe(true));
+    await selectRadixOption("Device filter", "Travel Kobo");
+    await screen.findAllByText("Older Book");
+
+    await act(async () => {
+      if (outcome === "success") resolvePrimary(populatedDashboard);
+      else rejectPrimary(new Error("Previous device request failed"));
+    });
+
+    expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo");
+    expect(screen.getAllByText("Older Book").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Piranesi")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: /Snapshots/i }));
+    const snapshotTable = within(screen.getByLabelText("Snapshots table"));
+    expect(snapshotTable.getAllByRole("row")).toHaveLength(2);
+    expect(snapshotTable.getByLabelText(`Device for ${olderSnapshot.id}`)).toHaveTextContent("Travel Kobo");
+  });
+
   it("keeps the selected device after manually uploading a snapshot", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
