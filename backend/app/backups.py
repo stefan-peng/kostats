@@ -15,6 +15,7 @@ import unicodedata
 import zipfile
 import zlib
 from collections import Counter
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable
@@ -208,7 +209,7 @@ def iter_files(root: Path) -> Iterable[Path]:
 def sqlite_content_hash(path: Path) -> str:
     digest = hashlib.sha256()
     uri = f"{path.resolve().as_uri()}?mode=ro"
-    with sqlite3.connect(uri, uri=True) as connection:
+    with closing(sqlite3.connect(uri, uri=True)) as connection:
         for line in connection.iterdump():
             digest.update(line.encode("utf-8"))
             digest.update(b"\n")
@@ -596,6 +597,7 @@ class RecoveryBackupStore:
         if summary is None:
             raise BackupError(f"Recovery backup not found: {identifier}")
         archive_path = Path(summary["archive_path"])
+        archive = None
         try:
             archive = zipfile.ZipFile(archive_path, "r")
             names = archive.namelist()
@@ -606,7 +608,12 @@ class RecoveryBackupStore:
                     raise BackupError("The recovery backup contains an unsafe path.")
             manifest = json.loads(archive.read("manifest.json"))
         except (OSError, KeyError, UnicodeError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+            if archive is not None:
+                archive.close()
             raise BackupError("The recovery backup archive is unreadable.") from exc
+        if not isinstance(manifest, dict):
+            archive.close()
+            raise BackupError("The recovery backup manifest is invalid.")
         if manifest.get("format_version", 1) not in SUPPORTED_BACKUP_FORMAT_VERSIONS:
             archive.close()
             raise BackupError("The recovery backup format is not supported.")

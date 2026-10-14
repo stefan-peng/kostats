@@ -13,8 +13,59 @@ import pytest
 from backend.app.backups import (
     RecoveryBackupStore,
     partial_md5,
+    sqlite_content_hash,
 )
 from backend.app.errors import BackupError
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_sqlite_hash_closes_connection_on_success_and_failure(monkeypatch, tmp_path: Path, fail: bool) -> None:
+    source = tmp_path / "source.sqlite3"
+    create_sqlite(source, "test")
+    connections = []
+    connect = sqlite3.connect
+
+    class Connection(sqlite3.Connection):
+        def iterdump(self):
+            if fail:
+                raise sqlite3.DatabaseError("cannot dump")
+            return super().iterdump()
+
+    def tracked_connect(*args, **kwargs):
+        connection = connect(*args, **kwargs, factory=Connection)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr("backend.app.backups.sqlite3.connect", tracked_connect)
+    if fail:
+        with pytest.raises(sqlite3.DatabaseError):
+            sqlite_content_hash(source)
+    else:
+        assert len(sqlite_content_hash(source)) == 64
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connections[0].execute("SELECT 1")
+
+
+@pytest.mark.parametrize("manifest", [None, "{bad", "[]", '{"format_version": 999}'])
+def test_load_archive_closes_invalid_manifest(monkeypatch, tmp_path: Path, manifest: str | None) -> None:
+    archive_path = tmp_path / "bad.zip"
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        if manifest is not None:
+            archive.writestr("manifest.json", manifest)
+    store = RecoveryBackupStore(tmp_path)
+    monkeypatch.setattr(store, "resolve", lambda _: {"archive_path": str(archive_path)})
+    archives = []
+    open_zip = zipfile.ZipFile
+
+    def tracked_zip(*args, **kwargs):
+        archive = open_zip(*args, **kwargs)
+        archives.append(archive)
+        return archive
+
+    monkeypatch.setattr("backend.app.backups.zipfile.ZipFile", tracked_zip)
+    with pytest.raises(BackupError):
+        store.load_archive("bad")
+    assert archives[0].fp is None
 
 
 def create_sqlite(path: Path, value: str) -> None:
