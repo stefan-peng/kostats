@@ -38,3 +38,28 @@ def test_malformed_sidecar_is_ignored(tmp_path: Path) -> None:
     path.write_text("return { broken = function() end }", encoding="utf-8")
 
     assert normalize_sidecar(path) is None
+
+
+def test_sidecar_cache_reuses_parsing_and_invalidates_rewrites(monkeypatch, tmp_path: Path) -> None:
+    import os
+    import backend.app.sidecars as sidecars
+
+    path = tmp_path / 'metadata.lua'
+    path.write_text('return { doc_props = { title = "First" } }')
+    original_parse = sidecars.parse_lua_table
+    calls = []
+    def counted_parse(text):
+        calls.append(text)
+        return original_parse(text)
+    monkeypatch.setattr(sidecars, 'parse_lua_table', counted_parse)
+    first = normalize_sidecar(path)
+    first['title'] = 'Mutated'
+    assert normalize_sidecar(path)['title'] == 'First'
+    assert len(calls) == 1
+    stat = path.stat()
+    path.write_text('return { doc_props = { title = "Other" } }')
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert normalize_sidecar(path)['title'] == 'Other'
+    assert len(calls) == 2
+    path.unlink()
+    assert normalize_sidecar(path) is None

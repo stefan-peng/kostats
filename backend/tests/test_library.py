@@ -185,3 +185,45 @@ def test_corrupt_sidecar_only_affects_its_book(tmp_path: Path, location: str):
     statuses = {book['title']: book['status'] for book in payload['library']}
     assert statuses == {'Affected': None, 'Unrelated': 'unread'}
     assert payload['malformed_count'] == 1
+
+
+@pytest.mark.parametrize('operation', ['checksum', 'metadata'])
+def test_inventory_cache_reuses_reads_and_detects_same_size_rewrites(monkeypatch, tmp_path: Path, operation: str):
+    import os
+    import zipfile
+    from backend.app.library import epub_metadata
+
+    path = tmp_path / 'Book.epub'
+    def write(title):
+        with zipfile.ZipFile(path, 'w') as archive:
+            archive.writestr('META-INF/container.xml', '<container><rootfiles><rootfile full-path="book.opf" /></rootfiles></container>')
+            archive.writestr('book.opf', f'<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>{title}</dc:title></metadata></package>')
+    write('First')
+    read = partial_md5 if operation == 'checksum' else epub_metadata
+    original_open = Path.open
+    reads = []
+    def tracked_open(self, *args, **kwargs):
+        reads.append(self)
+        return original_open(self, *args, **kwargs)
+    first = read(path)
+    stat = path.stat()
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, 'open', tracked_open)
+        patch.setattr(zipfile, 'ZipFile', lambda *args, **kwargs: pytest.fail('Unchanged EPUB was reopened'))
+        assert read(path) == first
+        assert not reads
+    if operation == 'metadata':
+        first['title'] = 'Mutated'
+        assert read(path)['title'] == 'First'
+    write('Other')
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    second = read(path)
+    assert second != first
+    if operation == 'metadata':
+        assert second['title'] == 'Other'
+    path.unlink()
+    if operation == 'checksum':
+        with pytest.raises(OSError):
+            read(path)
+    else:
+        assert read(path) == {}

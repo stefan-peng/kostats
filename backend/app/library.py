@@ -5,8 +5,11 @@ from __future__ import annotations
 import hashlib
 import os
 import zipfile
+from functools import lru_cache
 from pathlib import Path
 from xml.etree import ElementTree
+
+from .file_cache import file_fingerprint
 
 BOOK_EXTENSIONS = {
     '.epub', '.pdf', '.djvu', '.djv', '.mobi', '.azw', '.azw3', '.fb2',
@@ -16,6 +19,11 @@ BOOK_EXTENSIONS = {
 
 
 def partial_md5(path: Path) -> str:
+    return cached_partial_md5(path.absolute(), file_fingerprint(path))
+
+
+@lru_cache(maxsize=4096)
+def cached_partial_md5(path: Path, fingerprint: tuple) -> str:
     # KOReader frontend/util.lua partialMD5: its 32-bit shift at i=-1 is zero.
     digest = hashlib.md5()
     with path.open('rb') as handle:
@@ -32,28 +40,33 @@ def epub_metadata(path: Path) -> dict:
     if path.suffix.lower() != '.epub':
         return {}
     try:
-        with zipfile.ZipFile(path) as archive:
-            def xml(name: str) -> ElementTree.Element:
-                if archive.getinfo(name).file_size > 2 * 1024 * 1024:
-                    raise ValueError('Metadata too large')
-                return ElementTree.fromstring(archive.read(name))
-            container = xml('META-INF/container.xml')
-            rootfile = next(node for node in container.iter() if node.tag.split('}')[-1] == 'rootfile')
-            package = xml(rootfile.attrib['full-path'])
-            ns = '{http://purl.org/dc/elements/1.1/}'
-            def values(name: str) -> list[str]:
-                return [
-                    node.text.strip() for node in package.iter(ns + name)
-                    if node.text and node.text.strip()
-                ]
-
-            return {
-                'title': next(iter(values('title')), None),
-                'authors': ', '.join(values('creator')) or None,
-                'language': next(iter(values('language')), None),
-            }
+        return dict(cached_epub_metadata(path.absolute(), file_fingerprint(path)))
     except (OSError, ValueError, KeyError, StopIteration, zipfile.BadZipFile, ElementTree.ParseError):
         return {}
+
+
+@lru_cache(maxsize=2048)
+def cached_epub_metadata(path: Path, fingerprint: tuple) -> dict:
+    with zipfile.ZipFile(path) as archive:
+        def xml(name: str) -> ElementTree.Element:
+            if archive.getinfo(name).file_size > 2 * 1024 * 1024:
+                raise ValueError('Metadata too large')
+            return ElementTree.fromstring(archive.read(name))
+        container = xml('META-INF/container.xml')
+        rootfile = next(node for node in container.iter() if node.tag.split('}')[-1] == 'rootfile')
+        package = xml(rootfile.attrib['full-path'])
+        ns = '{http://purl.org/dc/elements/1.1/}'
+        def values(name: str) -> list[str]:
+            return [
+                node.text.strip() for node in package.iter(ns + name)
+                if node.text and node.text.strip()
+            ]
+
+        return {
+            'title': next(iter(values('title')), None),
+            'authors': ', '.join(values('creator')) or None,
+            'language': next(iter(values('language')), None),
+        }
 
 
 def inventory(volume: Path) -> list[dict]:

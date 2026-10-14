@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from .library import inventory
+from .file_cache import file_fingerprint
 from .lua_table import LuaTableError, parse_lua_table
 
 
@@ -57,9 +59,15 @@ def annotation_count(value: Any) -> tuple[int, int]:
 
 def normalize_sidecar(path: Path) -> dict[str, Any] | None:
     try:
-        parsed = parse_lua_table(path.read_text(encoding="utf-8"))
+        record = cached_sidecar(path.absolute(), file_fingerprint(path))
     except (OSError, UnicodeError, LuaTableError):
         return None
+    return dict(record) if record is not None else None
+
+
+@lru_cache(maxsize=2048)
+def cached_sidecar(path: Path, fingerprint: tuple) -> dict[str, Any] | None:
+    parsed = parse_lua_table(path.read_text(encoding="utf-8"))
     if not isinstance(parsed, dict):
         return None
 

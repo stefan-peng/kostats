@@ -5,6 +5,8 @@ from .diagnostics import observed, record
 import sqlite3
 import tempfile
 import threading
+from concurrent.futures import Future
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,8 @@ KOBO_DB_CANDIDATES = [
 ]
 DEVICE_LOCK = threading.RLock()
 AUTO_IMPORT_LOCK = DEVICE_LOCK
+AUTO_IMPORT_FLIGHTS_LOCK = threading.Lock()
+AUTO_IMPORT_FLIGHTS: dict[tuple[Path, str], Future] = {}
 KOBO_SNAPSHOT_SOURCES = {"kobo", "kobo-auto"}
 
 
@@ -197,6 +201,31 @@ def resolve_auto_import_device(
 @observed("device.auto_import_from_kobo")
 def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> dict[str, Any]:
     status = device_status(volume)
+    if not status["selected_path"]:
+        return _auto_import_from_kobo(store, status)
+    # Concurrent tabs share the current check instead of queueing full scans.
+    key = (store.root.resolve(), status["selected_path"])
+    with AUTO_IMPORT_FLIGHTS_LOCK:
+        future = AUTO_IMPORT_FLIGHTS.get(key)
+        owner = future is None
+        if owner:
+            future = Future()
+            AUTO_IMPORT_FLIGHTS[key] = future
+    if not owner:
+        return deepcopy(future.result())
+    try:
+        result = _auto_import_from_kobo(store, status)
+        future.set_result(result)
+        return deepcopy(result)
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        with AUTO_IMPORT_FLIGHTS_LOCK:
+            del AUTO_IMPORT_FLIGHTS[key]
+
+
+def _auto_import_from_kobo(store: SnapshotStore, status: dict[str, Any]) -> dict[str, Any]:
     latest = store.latest()
     latest_payload = latest.__dict__ if latest else None
     result = {

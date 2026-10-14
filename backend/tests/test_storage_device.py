@@ -656,6 +656,71 @@ def test_concurrent_auto_import_from_kobo_does_not_duplicate_snapshot(tmp_path: 
     assert all(not thread.is_alive() for thread in threads)
     assert errors == []
     assert len(results) == 2
-    assert sum(1 for result in results if result["imported"]) == 1
-    assert sum(1 for result in results if result["reason"] == "unchanged") == 1
+    # A shared result tells every tab to refresh, but creates only one snapshot.
+    assert any(result["imported"] for result in results)
+    assert results[0]["snapshot"]["id"] == results[1]["snapshot"]["id"]
     assert len(store.list_snapshots()) == 1
+    assert auto_import_from_kobo(store, volume)["reason"] == "unchanged"
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_concurrent_auto_import_shares_work_and_releases_failed_flights(monkeypatch, tmp_path: Path, fail: bool):
+    from concurrent.futures import Future
+    import backend.app.device as device
+
+    volume = tmp_path / 'KOBOeReader'
+    create_db(volume / '.adds/koreader/settings/statistics.sqlite3')
+    store = SnapshotStore(tmp_path / 'data')
+    entered = threading.Event()
+    joined = threading.Event()
+    release = threading.Event()
+    calls = []
+    results = []
+    errors = []
+
+    class TrackedFuture(Future):
+        def result(self, *args, **kwargs):
+            joined.set()
+            return super().result(*args, **kwargs)
+
+    def scan(*args):
+        calls.append(1)
+        entered.set()
+        assert release.wait(5)
+        if fail:
+            raise ImportError('scan failed')
+        return {'imported': True, 'device': {'mounted': True}}
+
+    def run():
+        try:
+            results.append(auto_import_from_kobo(store, volume))
+        except Exception as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(device, 'Future', TrackedFuture)
+    monkeypatch.setattr(device, '_auto_import_from_kobo', scan)
+    first = threading.Thread(target=run)
+    second = threading.Thread(target=run)
+    first.start()
+    try:
+        assert entered.wait(5)
+        second.start()
+        assert joined.wait(5)
+    finally:
+        release.set()
+        first.join(5)
+        if second.ident is not None:
+            second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert len(calls) == 1
+    assert device.AUTO_IMPORT_FLIGHTS == {}
+    if fail:
+        assert len(errors) == 2
+        assert all(isinstance(error, ImportError) for error in errors)
+        with pytest.raises(ImportError):
+            auto_import_from_kobo(store, volume)
+        assert len(calls) == 2
+    else:
+        assert not errors and len(results) == 2
+        results[0]['device']['mounted'] = False
+        assert results[1]['device']['mounted'] is True
