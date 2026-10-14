@@ -356,7 +356,8 @@ def post_auto_import_kobo() -> dict:
 
 
 @app.post("/api/import/upload")
-async def post_import_upload(
+# FastAPI runs sync endpoints in its worker pool, including file I/O and dashboard builds.
+def post_import_upload(
     file: UploadFile = File(...),
     device_id: str | None = Form(default=None),
     new_device_label: str | None = Form(default=None),
@@ -366,7 +367,7 @@ async def post_import_upload(
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
             tmp_path = Path(handle.name)
-            while chunk := await file.read(1024 * 1024):
+            while chunk := file.file.read(1024 * 1024):
                 handle.write(chunk)
 
         assignment = DeviceAssignmentRequest(device_id=device_id, new_device_label=new_device_label)

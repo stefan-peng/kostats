@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 import backend.app.main as main_module
 from backend.app.backups import partial_md5
@@ -89,6 +92,45 @@ def test_upload_import_and_dashboard(monkeypatch, tmp_path: Path) -> None:
     dashboard = client.get("/api/dashboard").json()
     assert dashboard["books"][0]["title"] == "Kindred"
     assert dashboard["recent_books"][0]["title"] == "Kindred"
+
+
+def test_upload_does_not_block_device_status(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(tmp_path / "data"))
+    source = tmp_path / "statistics.sqlite3"
+    create_api_fixture(source)
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    original_import = SnapshotStore.import_file
+
+    def slow_import(self, *args, **kwargs):
+        entered.set()
+        try:
+            assert release.wait(5), "Upload was not released by the concurrent status request"
+            return original_import(self, *args, **kwargs)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(SnapshotStore, "import_file", slow_import)
+
+    async def check():
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            upload = asyncio.create_task(client.post(
+                "/api/import/upload",
+                files={"file": ("statistics.sqlite3", source.read_bytes(), "application/octet-stream")},
+                data={"new_device_label": "Desk Kobo"},
+            ))
+            try:
+                assert await asyncio.to_thread(entered.wait, 5)
+                status = await asyncio.wait_for(client.get("/api/device/status"), timeout=2)
+                assert status.status_code == 200
+                assert not finished.is_set()
+            finally:
+                release.set()
+                response = await upload
+            assert response.status_code == 200
+
+    asyncio.run(check())
 
 
 def test_dashboard_resolves_cover_and_endpoint_has_immutable_headers(monkeypatch, tmp_path: Path) -> None:
