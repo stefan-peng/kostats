@@ -175,7 +175,7 @@ import type {
   Snapshot,
 } from "./types";
 
-type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "export" | "settings";
+type View = "dashboard" | "snapshots" | "backups" | "books" | "calendar" | "transfer" | "settings";
 type BusyAction = "snapshot" | "import" | "upload" | "backup" | "restore";
 type ActionErrorKey = "import" | "upload" | "snapshot" | "rename";
 type UiError = { message: string; details?: string };
@@ -184,7 +184,7 @@ type NavItem = { id: View; label: string; icon: typeof Home; badge?: number };
 type ReadingDateFilter = { date: string; bookIds: string[] };
 type DeviceFilter = "all" | string;
 
-const views = new Set<View>(["dashboard", "snapshots", "backups", "books", "calendar", "export", "settings"]);
+const views = new Set<View>(["dashboard", "snapshots", "backups", "books", "calendar", "transfer", "settings"]);
 const tablePageSize = 20;
 const deviceStatusPollMs = 15_000;
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1109,20 +1109,12 @@ function DeviceBanner({
       >
         <div className="compact-device-status__summary flex min-w-0 items-center gap-2">
           <Badge className="shrink-0" variant={stateVariant}>{stateLabel}</Badge>
-          <span className="truncate font-medium">{activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
+          <span className="min-w-0 text-muted-foreground">{snapshotLabel} · {activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"}</span>
         </div>
         <div className="compact-device-status__actions ml-auto flex flex-wrap items-center gap-2">
           {deviceFilter != null && onDeviceFilterChange ? (
             <DeviceSelector devices={devices} value={deviceFilter} onChange={onDeviceFilterChange} />
           ) : null}
-          <Button size="sm" aria-label="Import from Kobo" disabled={busy || !found} onClick={onImport}>
-            {importing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
-            {importing ? "Importing..." : "Import"}
-          </Button>
-          <Button size="sm" variant="outline" disabled={busy} onClick={onUploadClick}>
-            <Upload data-icon="inline-start" />
-            Upload DB
-          </Button>
         </div>
       </div>
     );
@@ -1162,6 +1154,16 @@ function DeviceBanner({
             onNewLabelChange={onImportDeviceLabelChange}
             includeAuto
           />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button aria-label="Import from Kobo" disabled={busy || !found || blocked || (importDevice === "new" && !importDeviceLabel.trim())} onClick={onImport}>
+            {importing ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Download data-icon="inline-start" />}
+            {importing ? "Importing..." : "Import from Kobo"}
+          </Button>
+          <Button variant="outline" disabled={busy || (importDevice === "new" && !importDeviceLabel.trim())} onClick={onUploadClick}>
+            <Upload data-icon="inline-start" />
+            Upload DB
+          </Button>
         </div>
         <dl className="grid gap-x-6 gap-y-3 border-t pt-4 text-sm sm:grid-cols-2">
           <MetadataItem label="Kobo mount path" value={status?.mount_path ?? "Auto-detect"} />
@@ -1999,10 +2001,6 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
 
   return (
     <>
-      {!dashboard.has_data ? (
-        <EmptyPanel icon={<Database />} title="No database yet" description="Import from Kobo or upload a KOReader database." />
-      ) : null}
-
       <section className="grid gap-5">
         <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
           <PrimaryMetric label="Total reading time" value={dashboard.summary.total_time_label} />
@@ -2589,7 +2587,7 @@ function CalendarView({
   );
 }
 
-function ExportView({ dashboard }: { dashboard: Dashboard }) {
+function TransferView({ dashboard, importSection }: { dashboard: Dashboard; importSection: ReactNode }) {
   function exportJson() {
     downloadText("kostats-dashboard.json", JSON.stringify(dashboard, null, 2), "application/json");
   }
@@ -2636,31 +2634,33 @@ function ExportView({ dashboard }: { dashboard: Dashboard }) {
   }
 
   return (
-    <EmptyPanel icon={<FileUp />} title="Export" description="Download the current dashboard or book table data.">
-      <div className="flex flex-wrap justify-center gap-2">
-        <Button disabled={!dashboard.has_data} onClick={exportJson}>
-          <Download data-icon="inline-start" />
-          Export dashboard JSON
-        </Button>
-        <Button variant="outline" disabled={!dashboard.has_data} onClick={exportBooksCsv}>
-          <Download data-icon="inline-start" />
-          Export books CSV
-        </Button>
-      </div>
-    </EmptyPanel>
+    <div className="grid min-w-0 max-w-4xl gap-4">
+      {importSection}
+      <Card>
+        <CardHeader><CardTitle>Export</CardTitle></CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button disabled={!dashboard.has_data} onClick={exportJson}>
+            <Download data-icon="inline-start" />
+            Dashboard JSON
+          </Button>
+          <Button variant="outline" disabled={!dashboard.has_data} onClick={exportBooksCsv}>
+            <Download data-icon="inline-start" />
+            Books CSV
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
 function SettingsView({
   devices,
   snapshots,
-  importSection,
   onRenameDevice,
   renameError,
 }: {
   devices: DeviceSummary[];
   snapshots: Snapshot[];
-  importSection: ReactNode;
   onRenameDevice: (deviceId: string, label: string) => Promise<void>;
   renameError?: UiError;
 }) {
@@ -2688,7 +2688,6 @@ function SettingsView({
           </Field>
         </CardContent>
       </Card>
-      {importSection}
       <Card role="region" aria-labelledby="devices-heading">
         <CardHeader>
           <CardTitle><h2 id="devices-heading">Devices</h2></CardTitle>
@@ -3039,14 +3038,14 @@ export default function App() {
   }
 
   function handleUploadRequest() {
-    if (activeView !== "settings") {
-      setUploadDevice(devices[0]?.id ?? "new");
-      setUploadDeviceLabel("");
-      setUploadDialogOpen(true);
+    if (activeView === "transfer" && isUploadAssignmentReady(importDevice, importDeviceLabel)) {
+      pendingUploadAssignment.current = assignmentFromSelection(importDevice, importDeviceLabel);
+      fileInput.current?.click();
       return;
     }
-    pendingUploadAssignment.current = assignmentFromSelection(importDevice, importDeviceLabel);
-    fileInput.current?.click();
+    setUploadDevice(activeView === "transfer" && importDevice !== "auto" ? importDevice : devices[0]?.id ?? "new");
+    setUploadDeviceLabel(activeView === "transfer" ? importDeviceLabel : "");
+    setUploadDialogOpen(true);
   }
 
   function handleUploadDialogClick() {
@@ -3170,7 +3169,6 @@ export default function App() {
 
   const latestSnapshot = snapshots[0] ?? dashboard.snapshot ?? null;
   const activeSnapshot = dashboard.snapshot ?? latestSnapshot;
-  const uploadAssignmentReady = isUploadAssignmentReady(importDevice, importDeviceLabel);
   const dialogUploadAssignmentReady = isUploadAssignmentReady(uploadDevice, uploadDeviceLabel);
   const selectedReadingDate = useMemo<ReadingDateFilter | null>(() => {
     if (!readingDateFilter) return null;
@@ -3186,7 +3184,7 @@ export default function App() {
     { id: "calendar", label: "Calendar", icon: CalendarDays },
     { id: "snapshots", label: "Snapshots", icon: Database, badge: snapshots.length },
     { id: "backups", label: "Backups", icon: ArchiveRestore, badge: backups.length },
-    { id: "export", label: "Export", icon: FileUp },
+    { id: "transfer", label: "Import / Export", icon: FileUp },
     { id: "settings", label: "Settings", icon: Settings },
   ];
   function selectView(view: View) {
@@ -3330,7 +3328,19 @@ export default function App() {
               </WarningAlert>
             ) : null}
 
-            {activeView === "dashboard" ? <MemoizedDashboardView dashboard={dashboard} /> : null}
+            {activeView === "dashboard" ? (
+              <>
+                {!dashboard.has_data ? (
+                  <EmptyPanel icon={<Database />} title="No database yet">
+                    <div className="flex flex-wrap justify-center gap-2">
+                      <Button disabled={busy || !device?.database_found || Boolean(device?.permission_error) || (importDevice === "new" && !importDeviceLabel.trim())} onClick={handleImport}>Import from Kobo</Button>
+                      <Button variant="outline" disabled={busy} onClick={handleUploadRequest}>Upload DB</Button>
+                    </div>
+                  </EmptyPanel>
+                ) : null}
+                <MemoizedDashboardView dashboard={dashboard} />
+              </>
+            ) : null}
             {activeView === "snapshots" ? (
               <SnapshotsView
                 snapshots={snapshots}
@@ -3365,11 +3375,9 @@ export default function App() {
                 onSelectDate={selectCalendarDate}
               />
             ) : null}
-            {activeView === "export" ? <ExportView dashboard={dashboard} /> : null}
-            {activeView === "settings" ? (
-              <SettingsView
-                devices={devices}
-                snapshots={snapshots}
+            {activeView === "transfer" ? (
+              <TransferView
+                dashboard={dashboard}
                 importSection={
                   <DeviceBanner
                     status={device}
@@ -3388,6 +3396,12 @@ export default function App() {
                     onRefresh={() => refresh().catch(reportRefreshError)}
                   />
                 }
+              />
+            ) : null}
+            {activeView === "settings" ? (
+              <SettingsView
+                devices={devices}
+                snapshots={snapshots}
                 onRenameDevice={handleRenameDevice}
                 renameError={actionErrors.rename}
               />

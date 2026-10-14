@@ -567,14 +567,15 @@ describe("App", () => {
     expect(within(warning).getByRole("button", { name: "Check access again" })).toBeInTheDocument();
     expect(within(warning).getByRole("button", { name: "Upload DB" })).toBeInTheDocument();
     expect(within(warning).getByText("Technical details")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
     const imports = within(screen.getByRole("region", { name: "Kobo import" }));
     expect(imports.getByRole("heading", { name: "Access issues" })).toBeInTheDocument();
     expect(imports.getByText("H:\\.adds\\koreader")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
     expect(within(screen.getByRole("region", { name: "Devices" })).queryByText("Access issues")).not.toBeInTheDocument();
   });
 
-  it("opens device assignment before uploading from compact views", async () => {
+  it("opens device assignment when uploading from the empty state", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {
         return {
@@ -596,12 +597,12 @@ describe("App", () => {
     const toolbar = within(screen.getByLabelText("Page toolbar"));
     expect(toolbar.getByText("Overview")).toBeInTheDocument();
     expect(toolbar.getByLabelText("Device filter")).toBeInTheDocument();
-    expect(toolbar.getByRole("button", { name: "Import from Kobo" })).toBeInTheDocument();
-    expect(toolbar.getByRole("button", { name: "Upload DB" })).toBeInTheDocument();
+    expect(toolbar.queryByRole("button", { name: "Import from Kobo" })).not.toBeInTheDocument();
+    expect(toolbar.queryByRole("button", { name: "Upload DB" })).not.toBeInTheDocument();
     const deviceBanner = within(screen.getByLabelText("Device import status"));
     expect(deviceBanner.queryByText("Import as")).not.toBeInTheDocument();
 
-    await userEvent.click(deviceBanner.getByRole("button", { name: /Upload DB/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Upload DB" }));
 
     const uploadDialog = await screen.findByRole("dialog");
     expect(within(uploadDialog).getByText("Choose which device this KOReader database belongs to.")).toBeInTheDocument();
@@ -611,7 +612,67 @@ describe("App", () => {
     await userEvent.click(within(uploadDialog).getByRole("button", { name: "Cancel" }));
     await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
 
+    expect(screen.queryByLabelText("Import device")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
     expect(screen.getByLabelText("Import device")).toHaveTextContent("Auto-detected");
+  });
+
+  it.each(["Overview", "Books", "Calendar", "Snapshots", "Backups", "Settings", "Import / Export"])(
+    "keeps import actions out of the %s toolbar", async (view) => {
+      mockFetch((url) => {
+        if (url.startsWith("/api/device/status")) return { mounted: false, database_found: false, candidates: [] };
+        if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+        return populatedDashboard;
+      });
+      render(<App />);
+      await screen.findByText("Daily reading");
+      await userEvent.click(screen.getByRole("link", { name: view }));
+      const toolbar = within(screen.getByLabelText("Page toolbar"));
+      expect(toolbar.getByLabelText("Device filter")).toBeInTheDocument();
+      expect(toolbar.queryByRole("button", { name: "Import from Kobo" })).not.toBeInTheDocument();
+      expect(toolbar.queryByRole("button", { name: "Upload DB" })).not.toBeInTheDocument();
+      if (view === "Import / Export") {
+        expect(screen.getByRole("region", { name: "Kobo import" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Dashboard JSON" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "Books CSV" })).toBeEnabled();
+      } else {
+        expect(screen.queryByRole("region", { name: "Kobo import" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Upload DB" })).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it("requires a name for a new import device and reuses its upload assignment", async () => {
+    const mountedStatus = { mounted: true, database_found: true, permission_error: null, candidates: [] };
+    let uploadBody: FormData | undefined;
+    mockFetch((url, init) => {
+      if (url.startsWith("/api/device/status")) return mountedStatus;
+      if (url.startsWith("/api/import/kobo/auto")) return { imported: false, reason: "unchanged", snapshot: populatedDashboard.snapshot, device: mountedStatus };
+      if (url.startsWith("/api/import/upload")) {
+        uploadBody = init?.body as FormData;
+        return { snapshot: populatedDashboard.snapshot, dashboard: populatedDashboard };
+      }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+    render(<App />);
+    await screen.findByText("Daily reading");
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
+    await selectRadixOption("Import device", "New device");
+    expect(screen.getByRole("button", { name: "Import from Kobo" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upload DB" })).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox", { name: "New device name" }), "Travel Kobo");
+    expect(screen.getByRole("button", { name: "Import from Kobo" })).toBeEnabled();
+    const picker = vi.spyOn(HTMLInputElement.prototype, "click");
+    await userEvent.click(screen.getByRole("button", { name: "Upload DB" }));
+    expect(picker).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.change(document.querySelector('input[type="file"]')!, {
+      target: { files: [new File(["sqlite"], "statistics.sqlite3")] },
+    });
+    await waitFor(() => expect(screen.getByText("Database uploaded")).toBeInTheDocument());
+    expect(uploadBody?.get("new_device_label")).toBe("Travel Kobo");
+    expect(uploadBody?.get("device_id")).toBeNull();
   });
 
   it.each(["success", "failure"])("ignores a stale device refresh %s after switching devices", async (outcome) => {
@@ -682,7 +743,8 @@ describe("App", () => {
     await selectRadixOption("Device filter", "Travel Kobo");
     await waitFor(() => expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo"));
 
-    await userEvent.click(within(screen.getByLabelText("Device import status")).getByRole("button", { name: "Upload DB" }));
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
+    await userEvent.click(screen.getByRole("button", { name: "Upload DB" }));
     const uploadDialog = await screen.findByRole("dialog", { name: "Upload DB" });
     await userEvent.click(within(uploadDialog).getByRole("button", { name: "Upload DB" }));
     const fileInput = document.querySelector('input[type="file"]');
@@ -719,7 +781,8 @@ describe("App", () => {
     await selectRadixOption("Device filter", "Travel Kobo");
     await waitFor(() => expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo"));
 
-    await userEvent.click(within(screen.getByLabelText("Device import status")).getByRole("button", { name: "Import from Kobo" }));
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
+    await userEvent.click(screen.getByRole("button", { name: "Import from Kobo" }));
 
     await waitFor(() => expect(screen.getByText("Imported from Kobo")).toBeInTheDocument());
     expect(screen.getByLabelText("Device filter")).toHaveTextContent("Travel Kobo");
@@ -1428,6 +1491,7 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
     const appearance = within(screen.getByRole("region", { name: "Appearance" }));
     expect(appearance.getByRole("combobox", { name: "Appearance" })).toHaveTextContent("Auto");
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
     const imports = within(screen.getByRole("region", { name: "Kobo import" }));
     expect(imports.getByText("Kobo mount path")).toBeInTheDocument();
     expect(imports.getByRole("button", { name: "Refresh now" })).toBeInTheDocument();
@@ -1435,6 +1499,7 @@ describe("App", () => {
     expect(imports.queryByRole("textbox", { name: "New device name" })).not.toBeInTheDocument();
     await selectRadixOption("Import device", "New device");
     expect(imports.getByRole("textbox", { name: "New device name" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
     const devices = within(screen.getByRole("region", { name: "Devices" }));
     expect(devices.getByText(/local snapshots/)).toBeInTheDocument();
     expect(devices.getByRole("textbox", { name: "Label for Primary Kobo" })).toBeInTheDocument();
@@ -2005,7 +2070,7 @@ describe("App", () => {
     expect((await screen.findAllByText("Older Book")).length).toBeGreaterThan(0);
 
     autoImportChanged = true;
-    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
     await userEvent.click(screen.getByRole("button", { name: /Refresh now/i }));
 
     await userEvent.click(screen.getByRole("link", { name: /Overview/i }));
@@ -2285,13 +2350,14 @@ describe("App", () => {
     render(<App />);
     await userEvent.click(await screen.findByRole("link", { name: /Backups/i }));
 
-    const importButton = screen.getByRole("button", { name: "Import from Kobo" });
     const backupButton = screen.getByRole("button", { name: "Back up now" });
     await userEvent.click(backupButton);
 
+    expect(backupButton.querySelector(".animate-spin")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
+    const importButton = screen.getByRole("button", { name: "Import from Kobo" });
     expect(importButton).toBeDisabled();
     expect(importButton.querySelector(".animate-spin")).not.toBeInTheDocument();
-    expect(backupButton.querySelector(".animate-spin")).toBeInTheDocument();
 
     releaseBackup();
     await waitFor(() => expect(screen.getByText("Recovery backup created")).toBeInTheDocument());
@@ -2359,8 +2425,8 @@ describe("App", () => {
 
     render(<App />);
     await userEvent.click(await screen.findByRole("link", { name: /Export/i }));
-    await userEvent.click(screen.getByRole("button", { name: /Export dashboard JSON/i }));
-    await userEvent.click(screen.getByRole("button", { name: /Export books CSV/i }));
+    await userEvent.click(screen.getByRole("button", { name: "Dashboard JSON" }));
+    await userEvent.click(screen.getByRole("button", { name: "Books CSV" }));
 
     expect(clickSpy).toHaveBeenCalledTimes(2);
     const csvBlob = vi.mocked(URL.createObjectURL).mock.calls[1][0] as Blob;
