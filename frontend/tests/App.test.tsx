@@ -845,7 +845,7 @@ describe("App", () => {
     expect(await screen.findByText("Daily reading")).toBeInTheDocument();
     expect(screen.getByText("Monthly reading")).toBeInTheDocument();
     expect(screen.getByText("Top books")).toBeInTheDocument();
-    expect(document.querySelectorAll('[data-slot="chart"]')).toHaveLength(3);
+    expect(document.querySelectorAll('[data-slot="chart"]')).toHaveLength(2);
     expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
   });
 
@@ -1010,7 +1010,7 @@ describe("App", () => {
       expect(Number(tick.getAttribute("y"))).toBeGreaterThanOrEqual(12);
     }
     const dateTicks = Array.from(card.querySelectorAll(".recharts-xAxis-tick-labels text"));
-    expect(dateTicks.map((tick) => tick.textContent)).toEqual(["Jan 26", "Oct 26"]);
+    expect(dateTicks.map((tick) => tick.textContent?.replace(/\s/g, ""))).toEqual(["Jan26", "Oct26"]);
     expect(Number(dateTicks.at(-1)!.getAttribute("x"))).toBeLessThanOrEqual(width - 16);
   });
 
@@ -1029,7 +1029,7 @@ describe("App", () => {
 
     const topBooks = Array.from({ length: 10 }, (_, index) => ({
       id: String(index + 1),
-      title: `Chart Book ${index + 1}`,
+      title: `Chart Book ${index + 1}: A long title that must remain readable without a tooltip`,
       hours: 10 - index,
     }));
 
@@ -1057,9 +1057,15 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Top books")).toBeInTheDocument();
+    const list = within(screen.getByRole("list", { name: "Top books" }));
+    expect(list.getAllByRole("listitem")).toHaveLength(10);
     for (const book of topBooks) {
-      expect(screen.getAllByText(book.title).length).toBeGreaterThan(0);
+      expect(list.getByText(book.title)).toBeVisible();
     }
+    await userEvent.click(list.getByRole("button", { name: /Chart Book 1:/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Piranesi" })).toBeInTheDocument();
+    expect(within(dialog).getByText("Reading time")).toBeInTheDocument();
   });
 
   it("shows calendar heatmap values on hover", async () => {

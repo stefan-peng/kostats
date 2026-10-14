@@ -295,13 +295,6 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
-const topBooksChartConfig = {
-  hours: {
-    label: "Hours",
-    color: "var(--chart-3)",
-  },
-} satisfies ChartConfig;
-
 const verticalBarSizing = {
   compact: 16,
   monthly: 28,
@@ -1471,35 +1464,12 @@ function DeviceStackedBarChart({
   );
 }
 
-function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
-  const chartData = data.map((item) => ({ ...item, label: item.title }));
-
-  function BookTitleTick({
-    x = 0,
-    y = 0,
-    payload,
-  }: {
-    x?: number;
-    y?: number;
-    payload?: { value?: unknown };
-  }) {
-    const title = String(payload?.value ?? "");
-    const label = title.length > 22 ? `${title.slice(0, 21).trimEnd()}…` : title;
-
-    return (
-      <text
-        x={x - 10}
-        y={y}
-        dy="0.32em"
-        textAnchor="end"
-        className="fill-muted-foreground text-[11px]"
-      >
-        <title>{title}</title>
-        {label}
-      </text>
-    );
-  }
-
+function TopBooksChart({ data, books, onSelectBook }: {
+  data: Dashboard["charts"]["top_books"];
+  books: BookStats[];
+  onSelectBook: (book: BookStats) => void;
+}) {
+  const maxHours = Math.max(0, ...data.map((item) => item.hours));
   return (
     <Card>
       <CardHeader>
@@ -1509,42 +1479,27 @@ function TopBooksChart({ data }: { data: Dashboard["charts"]["top_books"] }) {
         {data.length === 0 ? (
           <EmptyPanel icon={<BookOpen />} title="No books yet" />
         ) : (
-          <ChartContainer config={topBooksChartConfig} className="h-64 w-full">
-            <BarChart accessibilityLayer data={chartData} layout="vertical" margin={{ left: 8, right: 24, top: 8 }}>
-              <CartesianGrid horizontal={false} />
-              <XAxis
-                type="number"
-                tickFormatter={(value) => formatChartAxisValue(Number(value), "hours")}
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-              />
-              <YAxis
-                dataKey="label"
-                type="category"
-                interval={0}
-                tickLine={false}
-                axisLine={false}
-                width={168}
-                tick={<BookTitleTick />}
-              />
-              <ChartTooltip
-                cursor={false}
-                content={
-                  <ChartTooltipContent
-                    hideIndicator
-                    formatter={(value, _name, item) => (
-                      <div className="grid gap-1">
-                        <span className="text-muted-foreground">{String(item.payload.title)}</span>
-                        <span className="font-medium">{formatDurationLabel(Number(value) * 3600)}</span>
-                      </div>
-                    )}
-                  />
-                }
-              />
-              <Bar dataKey="hours" barSize={18} fill="var(--color-hours)" isAnimationActive={false} radius={4} />
-            </BarChart>
-          </ChartContainer>
+          <ol aria-label="Top books" className="divide-y">
+            {data.map((item) => {
+              const book = books.find((book) => book.id === item.id);
+              return (
+                <li key={item.id}>
+                  <Button
+                    variant="ghost"
+                    className="h-auto w-full min-w-0 flex-col items-stretch gap-2 whitespace-normal py-3 text-left"
+                    disabled={!book}
+                    onClick={() => book && onSelectBook(book)}
+                  >
+                    <span className="flex min-w-0 items-start justify-between gap-3">
+                      <span className="min-w-0 [overflow-wrap:anywhere]">{item.title}</span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">{formatDurationLabel(item.hours * 3600)}</span>
+                    </span>
+                    <Progress aria-hidden="true" value={maxHours > 0 ? (item.hours / maxHours) * 100 : 0} />
+                  </Button>
+                </li>
+              );
+            })}
+          </ol>
         )}
       </CardContent>
     </Card>
@@ -2089,7 +2044,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
       </section>
 
       <section className="grid gap-4">
-        <div className="grid gap-4 xl:grid-cols-2">
+        <div className="grid items-start gap-4 xl:grid-cols-2">
           {dashboard.charts.devices?.length && dashboard.charts.monthly_by_device?.length ? (
             <DeviceStackedBarChart
               title="Monthly reading by device"
@@ -2105,7 +2060,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
               formatValue={(hours) => formatDurationLabel(hours * 3600)}
             />
           )}
-          <TopBooksChart data={dashboard.charts.top_books} />
+          <TopBooksChart data={dashboard.charts.top_books} books={dashboard.books} onSelectBook={setSelectedBook} />
         </div>
       </section>
 
