@@ -327,7 +327,8 @@ def test_device_status_reports_default_mount_without_database(monkeypatch, tmp_p
     assert status["selected_path"] is None
 
 
-def test_import_from_kobo_uses_koreader_settings_database(tmp_path: Path) -> None:
+def test_import_from_kobo_uses_koreader_settings_database(tmp_path: Path, caplog) -> None:
+    caplog.set_level("INFO", logger="backend.app.device")
     volume = tmp_path / "KOBOeReader"
     db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
     create_db(db_path)
@@ -338,6 +339,7 @@ def test_import_from_kobo_uses_koreader_settings_database(tmp_path: Path) -> Non
     assert result["device"]["database_found"] is True
     assert result["snapshot"]["source"] == "kobo"
     assert result["snapshot"]["source_path"] == str(db_path)
+    assert f"Imported Kobo snapshot {result['snapshot']['id']}" in caplog.messages
 
 
 def test_import_from_kobo_without_mount_is_clear(tmp_path: Path) -> None:
@@ -345,7 +347,8 @@ def test_import_from_kobo_without_mount_is_clear(tmp_path: Path) -> None:
         import_from_kobo(SnapshotStore(tmp_path / "data"), tmp_path / "missing")
 
 
-def test_auto_import_from_kobo_imports_only_when_database_changes(tmp_path: Path) -> None:
+def test_auto_import_from_kobo_imports_only_when_database_changes(tmp_path: Path, caplog) -> None:
+    caplog.set_level("INFO", logger="backend.app.device")
     volume = tmp_path / "KOBOeReader"
     db_path = volume / ".adds/koreader/settings/statistics.sqlite3"
     create_db(db_path)
@@ -368,6 +371,10 @@ def test_auto_import_from_kobo_imports_only_when_database_changes(tmp_path: Path
     assert third["imported"] is True
     assert third["snapshot"]["id"] != first["snapshot"]["id"]
     assert len(store.list_snapshots()) == 2
+    assert [message for message in caplog.messages if message.startswith("Auto-imported")] == [
+        f"Auto-imported Kobo snapshot {first['snapshot']['id']}",
+        f"Auto-imported Kobo snapshot {third['snapshot']['id']}",
+    ]
 
 
 def test_auto_import_from_kobo_compares_latest_same_device_snapshot(tmp_path: Path) -> None:

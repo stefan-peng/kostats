@@ -12,6 +12,28 @@ from rich.logging import RichHandler
 DEFAULT_LOG_LEVEL = "INFO"
 
 
+class PollingAccessFilter(logging.Filter):
+    """Keep successful background checks out of INFO access output."""
+
+    def filter(self, entry: logging.LogRecord) -> bool:
+        if (
+            entry.name == "uvicorn.access"
+            and entry.levelno == logging.INFO
+            and isinstance(entry.args, tuple)
+            and len(entry.args) == 5
+        ):
+            _, method, target, _, status = entry.args
+            path = target.partition("?")[0]
+            if (method, path) in {
+                ("GET", "/api/device/status"),
+                ("POST", "/api/import/kobo/auto"),
+            } and 200 <= status < 300:
+                entry.levelno = logging.DEBUG
+                entry.levelname = "DEBUG"
+                return entry.levelno >= logging.getLevelNamesMapping()[log_level()]
+        return True
+
+
 def log_level() -> str:
     value = os.environ.get("KOSTATS_LOG_LEVEL", DEFAULT_LOG_LEVEL).upper()
     return value if value in logging.getLevelNamesMapping() else DEFAULT_LOG_LEVEL
@@ -53,6 +75,9 @@ def configure_logging(*, show_time: bool = True) -> None:
         logger.handlers.clear()
         logger.propagate = True
 
+    access = logging.getLogger("uvicorn.access")
+    access.filters = [item for item in access.filters if not isinstance(item, PollingAccessFilter)]
+    access.addFilter(PollingAccessFilter())
     logging.getLogger("watchfiles").setLevel(watcher_log_level())
     logging.captureWarnings(True)
 
@@ -63,6 +88,7 @@ def uvicorn_log_config() -> dict[str, object]:
     return {
         "version": 1,
         "disable_existing_loggers": False,
+        "filters": {"polling": {"()": "backend.app.logging.PollingAccessFilter"}},
         "handlers": {
             "persistent": {"()": "backend.app.diagnostics.PersistentHandler"},
             "rich": {
@@ -73,7 +99,7 @@ def uvicorn_log_config() -> dict[str, object]:
             "watchfiles": {"level": watcher_log_level()},
             "uvicorn": {"handlers": ["rich", "persistent"], "level": level, "propagate": False},
             "uvicorn.error": {"level": level},
-            "uvicorn.access": {"handlers": ["rich", "persistent"], "level": level, "propagate": False},
+            "uvicorn.access": {"handlers": ["rich", "persistent"], "filters": ["polling"], "level": level, "propagate": False},
         },
         "root": {"handlers": ["rich", "persistent"], "level": level},
     }

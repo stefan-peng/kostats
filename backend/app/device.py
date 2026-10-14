@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .diagnostics import observed, record
 
+import logging
 import sqlite3
 import tempfile
 import threading
@@ -35,6 +36,18 @@ AUTO_IMPORT_LOCK = DEVICE_LOCK
 AUTO_IMPORT_FLIGHTS_LOCK = threading.Lock()
 AUTO_IMPORT_FLIGHTS: dict[tuple[Path, str], Future] = {}
 KOBO_SNAPSHOT_SOURCES = {"kobo", "kobo-auto"}
+logger = logging.getLogger(__name__)
+STATUS_LOG_LOCK = threading.Lock()
+_last_device_state: tuple | None = None
+
+
+def log_device_state(status: dict[str, Any]) -> None:
+    global _last_device_state
+    state = (status["mounted"], status["database_found"], bool(status["permission_error"]))
+    with STATUS_LOG_LOCK:
+        if state != _last_device_state:
+            _last_device_state = state
+            logger.info("Kobo status: mounted=%s database_found=%s access_blocked=%s", *state)
 
 
 @dataclass(frozen=True)
@@ -95,7 +108,7 @@ def device_status(volume: Path | None = None) -> dict[str, Any]:
         permission_error = next((candidate.error for candidate in candidates if candidate.error), None)
     trusted_mount_path = explicit_root or root in labeled_roots or kobo_volume_is_default_mount_path(root)
     selected_mounted = readable is not None or (mounted and trusted_mount_path)
-    return {
+    status = {
         "mount_path": str(root),
         "mounted": selected_mounted,
         "database_found": readable is not None,
@@ -104,6 +117,9 @@ def device_status(volume: Path | None = None) -> dict[str, Any]:
         "candidates": [candidate.__dict__ for candidate in candidates],
         "searched_mount_paths": [str(root) for root in roots],
     }
+    if volume is None:
+        log_device_state(status)
+    return status
 
 
 @observed("device.import_from_kobo")
@@ -135,6 +151,7 @@ def import_from_kobo(store: SnapshotStore, volume: Path | None = None, device: d
             sidecar_payload=sidecar_payload,
             device=device,
         )
+    logger.info("Imported Kobo snapshot %s", meta.id)
     return {"snapshot": meta.__dict__, "device": status}
 
 
@@ -286,6 +303,7 @@ def _auto_import_from_kobo(store: SnapshotStore, status: dict[str, Any]) -> dict
                 device=device,
             )
 
+    logger.info("Auto-imported Kobo snapshot %s", meta.id)
     return {
         "imported": True,
         "reason": "changed",
