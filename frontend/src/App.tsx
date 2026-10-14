@@ -777,7 +777,7 @@ function BookActivityChart({
       <BarChart
         accessibilityLayer
         data={data}
-        margin={{ left: 12, right: 32, top: 8, bottom: 8 }}
+        margin={{ left: 8, right: 24, top: 16, bottom: 4 }}
         barCategoryGap={verticalBarSizing.categoryGap}
       >
         <CartesianGrid vertical={false} />
@@ -788,7 +788,7 @@ function BookActivityChart({
           tickLine={false}
           axisLine={false}
           tickMargin={8}
-          width={44}
+          width={60}
         />
         <ChartTooltip
           cursor={false}
@@ -1335,7 +1335,7 @@ function ReadingBarChart({
             <BarChart
               accessibilityLayer
               data={data}
-              margin={{ left: 0, right: 0, top: 8 }}
+              margin={{ left: 8, right: 24, top: 16, bottom: 4 }}
               barCategoryGap={verticalBarSizing.categoryGap}
             >
               <CartesianGrid vertical={false} />
@@ -1352,7 +1352,7 @@ function ReadingBarChart({
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
-                width={44}
+                width={60}
               />
               <ChartTooltip
                 cursor={false}
@@ -1425,7 +1425,7 @@ function DeviceStackedBarChart({
             <BarChart
               accessibilityLayer
               data={data}
-              margin={{ left: 0, right: 0, top: 8 }}
+              margin={{ left: 8, right: 24, top: 16, bottom: 4 }}
               barCategoryGap={verticalBarSizing.categoryGap}
             >
               <CartesianGrid vertical={false} />
@@ -1436,7 +1436,7 @@ function DeviceStackedBarChart({
                 tickLine={false}
                 axisLine={false}
                 tickMargin={8}
-                width={44}
+                width={60}
               />
               <ChartTooltip
                 cursor={false}

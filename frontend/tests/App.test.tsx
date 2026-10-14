@@ -980,6 +980,40 @@ describe("App", () => {
     expect(document.querySelectorAll(".recharts-bar-rectangle").length).toBeGreaterThan(0);
   });
 
+  it("keeps long chart values and endpoint dates inside a narrow SVG", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const width = this.id === "recharts_measurement_span" ? (this.textContent?.length ?? 0) * 7 : 280;
+      const height = this.id === "recharts_measurement_span" ? 14 : 210;
+      return { bottom: height, height, left: 0, right: width, top: 0, width, x: 0, y: 0, toJSON: () => ({}) };
+    });
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return { mounted: false, database_found: false, candidates: [] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return {
+        ...populatedDashboard,
+        charts: {
+          ...populatedDashboard.charts,
+          monthly: [
+            { month: "2026-01", label: "Jan 26", hours: 1 },
+            { month: "2026-10", label: "Oct 26", hours: 1234.5 },
+          ],
+        },
+      };
+    });
+    render(<App />);
+    const card = (await screen.findByText("Monthly reading")).closest('[data-slot="card"]')!;
+    await waitFor(() => expect(card.querySelectorAll(".recharts-yAxis-tick-labels text").length).toBeGreaterThan(0));
+    const svg = card.querySelector("svg.recharts-surface")!;
+    const width = Number(svg.getAttribute("width"));
+    for (const tick of card.querySelectorAll(".recharts-yAxis-tick-labels text")) {
+      expect(Number(tick.getAttribute("x"))).toBeGreaterThanOrEqual(44);
+      expect(Number(tick.getAttribute("y"))).toBeGreaterThanOrEqual(12);
+    }
+    const dateTicks = Array.from(card.querySelectorAll(".recharts-xAxis-tick-labels text"));
+    expect(dateTicks.map((tick) => tick.textContent)).toEqual(["Jan 26", "Oct 26"]);
+    expect(Number(dateTicks.at(-1)!.getAttribute("x"))).toBeLessThanOrEqual(width - 16);
+  });
+
   it("renders a label for every top book", async () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       bottom: 0,
