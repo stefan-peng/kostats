@@ -301,9 +301,12 @@ def test_corrupt_dictionary_deflate_stream_is_reported_and_replaced(tmp_path: Pa
 
     with zipfile.ZipFile(tmp_path / "backup.zip", "w") as archive:
         with pytest.raises(BackupError, match="unreadable"):
-            store.read_payload({"category": "dictionaries", "sha256": checksum}, archive)
+            with store.open_payload({"category": "dictionaries", "sha256": checksum}, archive) as source:
+                source.read(1024)
 
-    store.store_dictionary_object(payload, checksum)
+    source = tmp_path / "dictionary.dict"
+    source.write_bytes(payload)
+    store.store_dictionary_object(source, checksum)
     assert gzip.decompress(object_path.read_bytes()) == payload
 
 
@@ -564,3 +567,121 @@ def test_restore_rejects_path_traversal_in_archive(tmp_path: Path) -> None:
 
     with pytest.raises(BackupError, match="unsafe path"):
         store.restore_preview(backup["id"], volume)
+
+
+@pytest.mark.parametrize('format_version', [1, 2])
+def test_large_backup_payloads_are_streamed_on_create_validate_and_restore(monkeypatch, tmp_path: Path, format_version: int) -> None:
+    store, volume, backup = backup_fixture(tmp_path)
+    dictionary = volume / '.adds/koreader/data/dict/custom.dict'
+    dictionary.write_bytes(b'dictionary' * 250000)
+    binary = volume / '.adds/koreader/data/tessdata/large.traineddata'
+    binary.parent.mkdir()
+    binary.write_bytes(b'ocr-data' * 300000)
+    expected = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (dictionary, binary)}
+    original_open = Path.open
+    original_gzip_read = gzip.GzipFile.read
+    reads = []
+
+    class BoundedReader:
+        def __init__(self, handle):
+            self.handle = handle
+        def read(self, size=-1):
+            assert 0 < size <= 1024 * 1024, 'Payload read must be bounded'
+            reads.append(size)
+            return self.handle.read(size)
+        def __getattr__(self, name):
+            return getattr(self.handle, name)
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return self.handle.__exit__(*args)
+
+    def bounded_open(path, mode='r', *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        return BoundedReader(handle) if path in expected and mode == 'rb' else handle
+
+    def bounded_gzip_read(self, size=-1):
+        assert 0 < size <= 1024 * 1024, 'Dictionary decompression must be bounded'
+        return original_gzip_read(self, size)
+
+    monkeypatch.setattr(Path, 'open', bounded_open)
+    monkeypatch.setattr(gzip.GzipFile, 'read', bounded_gzip_read)
+    backup = store.create_from_kobo(volume, force=True)['backup']
+    # A repeat exercises validation of an existing dictionary object.
+    store.create_from_kobo(volume, force=True)
+    if format_version == 1:
+        # Convert a fixture before enforcing bounded ZIP reads.
+        with monkeypatch.context() as patch:
+            patch.setattr(Path, 'open', original_open)
+            patch.setattr(gzip.GzipFile, 'read', original_gzip_read)
+            backup = make_v1_backup(store, volume, backup)
+    original_zip_open = zipfile.ZipFile.open
+    def bounded_zip_open(self, name, mode='r', *args, **kwargs):
+        handle = original_zip_open(self, name, mode, *args, **kwargs)
+        return BoundedReader(handle) if mode == 'r' and str(name).endswith(('.dict', '.traineddata')) else handle
+    monkeypatch.setattr(zipfile.ZipFile, 'open', bounded_zip_open)
+    for path in expected:
+        path.unlink()
+    preview = store.restore_preview(backup['id'], volume)
+    assert preview['required_bytes'] > 4 * 1024 * 1024
+    result = store.restore(backup['id'], confirmed=True, restore_extensions=False, volume=volume)
+    assert not result['failed']
+    assert reads
+    for path, checksum in expected.items():
+        with original_open(path, 'rb') as handle:
+            assert hashlib.sha256(handle.read()).hexdigest() == checksum
+
+
+def test_dictionary_source_change_does_not_publish_invalid_object(tmp_path: Path) -> None:
+    store = RecoveryBackupStore(tmp_path / 'data')
+    source = tmp_path / 'dictionary.dict'
+    source.write_bytes(b'changed')
+    checksum = hashlib.sha256(b'original').hexdigest()
+    with pytest.raises(BackupError, match='changed'):
+        store.store_dictionary_object(source, checksum)
+    assert not store.dictionary_object_path(checksum).exists()
+    assert not list(store.dictionary_objects_dir.rglob('*.tmp'))
+
+
+def test_failed_stream_restore_preserves_destination_and_removes_temporary(tmp_path: Path) -> None:
+    from backend.app.backups import write_stream
+    destination = tmp_path / 'data.dict'
+    destination.write_bytes(b'original')
+    class BrokenSource:
+        calls = 0
+        def read(self, size):
+            self.calls += 1
+            if self.calls == 1:
+                return b'partial'
+            raise OSError('read failed')
+    with pytest.raises(OSError):
+        write_stream(destination, BrokenSource())
+    assert destination.read_bytes() == b'original'
+    assert not (tmp_path / '.data.dict.kostats.tmp').exists()
+
+
+def test_backup_failure_before_archive_creation_cleans_database_copies(monkeypatch, tmp_path: Path) -> None:
+    import tempfile
+    volume = tmp_path / 'KOBOeReader'
+    create_koreader_fixture(volume)
+    store = RecoveryBackupStore(tmp_path / 'data')
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    def disconnected(_):
+        raise OSError('device disconnected')
+    monkeypatch.setattr('backend.app.backups.sidecar_sources', disconnected)
+    with pytest.raises(OSError, match='disconnected'):
+        store.create_from_kobo(volume)
+    assert not list(tmp_path.glob('kostats-backup-*'))
+    assert not list(store.backups_dir.glob('*.zip'))
+
+
+def test_dictionary_failure_discards_incomplete_archive(monkeypatch, tmp_path: Path) -> None:
+    volume = tmp_path / 'KOBOeReader'
+    create_koreader_fixture(volume)
+    store = RecoveryBackupStore(tmp_path / 'data')
+    def changed(*args):
+        raise BackupError('Dictionary changed')
+    monkeypatch.setattr(store, 'store_dictionary_object', changed)
+    with pytest.raises(BackupError, match='Dictionary changed'):
+        store.create_from_kobo(volume)
+    assert not list(store.backups_dir.glob('*.zip'))
