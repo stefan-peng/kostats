@@ -10,6 +10,8 @@ EPUB titles and authors come from embedded metadata; other formats use filenames
 
 Recovery backups use format v2 by default. They preserve KOReader settings, statistics, vocabulary, dictionaries, sidecars, and optional extensions without copying EPUB, PDF, or other book payloads. Format v2 stores dictionary payloads in the local content-addressed store alongside the ZIP archives, so the `data/` directory must stay together. Existing format v1 backups, which store dictionaries inside each ZIP, remain restorable. Restoring a recovery backup modifies the mounted Kobo only after an explicit preview and confirmation, and first creates a safety backup of the device's current state.
 
+The theme defaults to **Auto**, following the browser's reported light/dark preference, including changes while the page is open. Choose **Auto**, **Light**, or **Dark** in **Settings → Appearance**; the choice is saved in that browser. Firefox's website appearance setting can override the desktop theme.
+
 ## Development
 
 ```bash

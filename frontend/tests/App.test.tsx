@@ -419,25 +419,38 @@ class ResizeObserverMock {
 }
 
 function stubSystemMedia({ dark = false, width = 1024 }: { dark?: boolean; width?: number } = {}) {
+  const themeListeners = new Set<(event: MediaQueryListEvent) => void>();
   vi.spyOn(window, "innerWidth", "get").mockReturnValue(width);
   vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query.includes("prefers-color-scheme")
-      ? dark
-      : query.includes("max-width")
-        ? width <= Number(query.match(/max-width:\s*(\d+)px/)?.[1] ?? 0)
-        : false,
+    get matches() {
+      return query.includes("prefers-color-scheme")
+        ? dark
+        : query.includes("max-width")
+          ? width <= Number(query.match(/max-width:\s*(\d+)px/)?.[1] ?? 0)
+          : false;
+    },
     media: query,
     onchange: null,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
+    addEventListener: vi.fn((_type, listener) => {
+      if (query.includes("prefers-color-scheme")) themeListeners.add(listener);
+    }),
+    removeEventListener: vi.fn((_type, listener) => themeListeners.delete(listener)),
+    addListener: vi.fn((listener) => {
+      if (query.includes("prefers-color-scheme")) themeListeners.add(listener);
+    }),
+    removeListener: vi.fn((listener) => themeListeners.delete(listener)),
     dispatchEvent: vi.fn(),
   }));
+  return (nextDark: boolean) => {
+    dark = nextDark;
+    act(() => {
+      themeListeners.forEach((listener) => listener({ matches: dark } as MediaQueryListEvent));
+    });
+  };
 }
 
 async function selectRadixOption(label: string, option: string) {
-  await userEvent.click(screen.getByLabelText(label));
+  await userEvent.click(screen.getByRole("combobox", { name: label }));
   await userEvent.click(await screen.findByRole("option", { name: option }));
 }
 
@@ -465,6 +478,9 @@ describe("App", () => {
   });
 
   beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.classList.remove("light", "dark");
+    document.documentElement.style.removeProperty("color-scheme");
     window.history.replaceState(null, "", window.location.pathname);
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date(2026, 5, 7, 12));
@@ -536,7 +552,7 @@ describe("App", () => {
           database_found: false,
           selected_path: null,
           permission_error: "Access denied while opening H:\\.adds\\koreader",
-          candidates: [],
+          candidates: [{ path: "H:\\.adds\\koreader", exists: true, readable: false, error: "Access denied" }],
         };
       }
       if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
@@ -551,6 +567,11 @@ describe("App", () => {
     expect(within(warning).getByRole("button", { name: "Check access again" })).toBeInTheDocument();
     expect(within(warning).getByRole("button", { name: "Upload DB" })).toBeInTheDocument();
     expect(within(warning).getByText("Technical details")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
+    const imports = within(screen.getByRole("region", { name: "Kobo import" }));
+    expect(imports.getByRole("heading", { name: "Access issues" })).toBeInTheDocument();
+    expect(imports.getByText("H:\\.adds\\koreader")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Devices" })).queryByText("Access issues")).not.toBeInTheDocument();
   });
 
   it("opens device assignment before uploading from compact views", async () => {
@@ -725,6 +746,59 @@ describe("App", () => {
 
     await screen.findByText("No database yet");
     await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
+  });
+
+  it("defaults to automatic light mode independently of a generic saved theme", async () => {
+    localStorage.setItem("theme", "dark");
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return { mounted: false, database_found: false, candidates: [] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [] };
+      return emptyDashboard;
+    });
+    render(<App />);
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
+
+    expect(screen.getByRole("combobox", { name: "Appearance" })).toHaveTextContent("Auto");
+    await waitFor(() => expect(document.documentElement).toHaveClass("light"));
+    expect(screen.getByRole("combobox", { name: "Appearance" })).toHaveTextContent("Auto (Light)");
+  });
+
+  it("saves manual themes and resumes live browser preference changes in Auto", async () => {
+    const setSystemDark = stubSystemMedia({ dark: true });
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return { mounted: false, database_found: false, candidates: [] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [] };
+      return emptyDashboard;
+    });
+    const app = render(<App />);
+    await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
+    await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
+
+    await selectRadixOption("Appearance", "Light");
+    await waitFor(() => expect(document.documentElement).toHaveClass("light"));
+    expect(document.documentElement.style.colorScheme).toBe("light");
+    expect(localStorage.getItem("kostats-theme")).toBe("light");
+    app.unmount();
+    render(<App />);
+    expect(screen.getByRole("combobox", { name: "Appearance" })).toHaveTextContent("Light");
+    await waitFor(() => expect(document.documentElement).toHaveClass("light"));
+
+    setSystemDark(false);
+    await selectRadixOption("Appearance", "Dark");
+    await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
+    expect(localStorage.getItem("kostats-theme")).toBe("dark");
+    setSystemDark(true);
+    setSystemDark(false);
+    expect(document.documentElement).toHaveClass("dark");
+
+    await selectRadixOption("Appearance", "Auto (Light)");
+    await waitFor(() => expect(document.documentElement).toHaveClass("light"));
+    expect(localStorage.getItem("kostats-theme")).toBe("system");
+    setSystemDark(true);
+    await waitFor(() => expect(document.documentElement).toHaveClass("dark"));
+    expect(screen.getByRole("combobox", { name: "Appearance" })).toHaveTextContent("Auto (Dark)");
+    setSystemDark(false);
+    await waitFor(() => expect(document.documentElement).toHaveClass("light"));
   });
 
   it("renders latest snapshot data when Kobo is not mounted", async () => {
@@ -1312,9 +1386,18 @@ describe("App", () => {
     expect(screen.queryByLabelText(/Monday, January 1, 2024/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
-    expect(screen.getAllByText("Settings").length).toBeGreaterThan(1);
-    expect(screen.getByText("Kobo mount path")).toBeInTheDocument();
-    expect(screen.getByText("Local snapshots")).toBeInTheDocument();
+    const appearance = within(screen.getByRole("region", { name: "Appearance" }));
+    expect(appearance.getByRole("combobox", { name: "Appearance" })).toHaveTextContent("Auto");
+    const imports = within(screen.getByRole("region", { name: "Kobo import" }));
+    expect(imports.getByText("Kobo mount path")).toBeInTheDocument();
+    expect(imports.getByRole("button", { name: "Refresh now" })).toBeInTheDocument();
+    expect(imports.getByRole("combobox", { name: "Import device" })).toHaveTextContent("Auto-detected");
+    expect(imports.queryByRole("textbox", { name: "New device name" })).not.toBeInTheDocument();
+    await selectRadixOption("Import device", "New device");
+    expect(imports.getByRole("textbox", { name: "New device name" })).toBeInTheDocument();
+    const devices = within(screen.getByRole("region", { name: "Devices" }));
+    expect(devices.getByText(/local snapshots/)).toBeInTheDocument();
+    expect(devices.getByRole("textbox", { name: "Label for Primary Kobo" })).toBeInTheDocument();
   });
 
   it("closes the mobile sidebar after selecting a section", async () => {

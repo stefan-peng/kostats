@@ -30,7 +30,7 @@ import {
   YAxis,
   type BarShapeProps,
 } from "recharts";
-import { ThemeProvider } from "next-themes";
+import { ThemeProvider, useTheme } from "next-themes";
 import {
   ArchiveRestore,
   ArrowDown,
@@ -1067,6 +1067,7 @@ function DeviceBanner({
   deviceFilter,
   onDeviceFilterChange,
   latestSnapshotMatchesDevice,
+  onRefresh,
   compact = false,
 }: {
   status: DeviceStatus | null;
@@ -1084,6 +1085,7 @@ function DeviceBanner({
   deviceFilter?: DeviceFilter;
   onDeviceFilterChange?: (value: DeviceFilter) => void;
   latestSnapshotMatchesDevice: boolean;
+  onRefresh?: () => void;
   compact?: boolean;
 }) {
   const mounted = status?.mounted ?? false;
@@ -1102,6 +1104,9 @@ function DeviceBanner({
   const snapshotLabel = activeSnapshot?.id === latestSnapshot?.id ? "Snapshot" : "Viewing";
   const showLatest = Boolean(latestSnapshot && activeSnapshot?.id !== latestSnapshot.id);
   const importing = busyAction === "import";
+  const candidateDiagnostics = (status?.candidates ?? []).filter(
+    (candidate) => candidate.error || (candidate.exists && !candidate.readable),
+  );
 
   if (compact) {
     return (
@@ -1131,19 +1136,27 @@ function DeviceBanner({
   }
 
   return (
-    <Card aria-label="Device import status">
-      <CardHeader>
+    <Card role="region" aria-labelledby="kobo-import-heading">
+      <CardHeader className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <HardDrive />
           </div>
           <div className="min-w-0">
-            <CardTitle>Kobo / KOReader</CardTitle>
+            <CardTitle><h2 id="kobo-import-heading">Kobo import</h2></CardTitle>
             <CardDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <Badge variant={stateVariant}>{stateLabel}</Badge>
+              <Badge className="max-w-full whitespace-normal" variant={stateVariant}>{stateLabel}</Badge>
             </CardDescription>
           </div>
         </div>
+        {onRefresh ? (
+          <CardAction>
+            <Button size="sm" variant="outline" onClick={onRefresh}>
+              <RefreshCw data-icon="inline-start" />
+              Refresh now
+            </Button>
+          </CardAction>
+        ) : null}
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="grid gap-2">
@@ -1157,33 +1170,37 @@ function DeviceBanner({
             includeAuto
           />
         </div>
-        <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-          <SnapshotMeta label={snapshotLabel} snapshot={activeSnapshot} />
-          {showLatest ? <SnapshotMeta label="Latest" snapshot={latestSnapshot} /> : null}
-          <SnapshotMeta label="Source" snapshot={activeSnapshot} source />
-        </div>
+        <dl className="grid gap-x-6 gap-y-3 border-t pt-4 text-sm sm:grid-cols-2">
+          <MetadataItem label="Kobo mount path" value={status?.mount_path ?? "Auto-detect"} />
+          <MetadataItem label={snapshotLabel} value={activeSnapshot ? formatDateTime(activeSnapshot.imported_at) : "None"} />
+          {showLatest ? <MetadataItem label="Latest" value={formatDateTime(latestSnapshot?.imported_at)} /> : null}
+          <MetadataItem className="sm:col-span-2" label="Source" value={activeSnapshot ? formatSnapshotSource(activeSnapshot) : "None"} />
+        </dl>
+        {candidateDiagnostics.length > 0 ? (
+          <div className="grid gap-3 border-t pt-4">
+            <h3 className="text-sm font-medium">Access issues</h3>
+            {candidateDiagnostics.map((candidate) => (
+              <Alert key={candidate.path} variant={candidate.error ? "destructive" : "default"}>
+                <AlertTitle>{candidate.readable ? "Readable" : candidate.exists ? "Blocked" : "Missing"}</AlertTitle>
+                <AlertDescription>
+                  <code className="break-all">{candidate.path}</code>
+                  {candidate.error ? <div>{candidate.error}</div> : null}
+                </AlertDescription>
+              </Alert>
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
 }
 
-function MetadataCard({ label, value }: { label: string; value: ReactNode }) {
+function MetadataItem({ label, value, className }: { label: string; value: ReactNode; className?: string }) {
   return (
-    <Card className="min-w-0" size="sm">
-      <CardHeader>
-        <CardDescription>{label}</CardDescription>
-      </CardHeader>
-      <CardContent className="truncate font-medium">{value}</CardContent>
-    </Card>
-  );
-}
-
-function SnapshotMeta({ label, snapshot, source = false }: { label: string; snapshot: Snapshot | null; source?: boolean }) {
-  return (
-    <MetadataCard
-      label={label}
-      value={snapshot ? (source ? formatSnapshotSource(snapshot) : formatDateTime(snapshot.imported_at)) : "None"}
-    />
+    <div className={cn("grid min-w-0 grid-cols-1 gap-1", className)}>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="break-words font-medium">{value}</dd>
+    </div>
   );
 }
 
@@ -1231,9 +1248,9 @@ function DeviceAssignmentControl({
   includeAuto?: boolean;
 }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-[minmax(180px,240px)_minmax(180px,1fr)]">
+    <div className={cn("grid gap-2", value === "new" ? "sm:grid-cols-[minmax(180px,240px)_minmax(180px,1fr)]" : "sm:max-w-60")}>
       <Select value={value} onValueChange={onValueChange}>
-        <SelectTrigger aria-label="Import device">
+        <SelectTrigger aria-label="Import device" className="w-full min-w-0">
           <SelectValue placeholder="Choose device" />
         </SelectTrigger>
         <SelectContent>
@@ -1248,13 +1265,12 @@ function DeviceAssignmentControl({
           </SelectGroup>
         </SelectContent>
       </Select>
-      <Input
+      {value === "new" ? <Input
         aria-label="New device name"
         placeholder="New device name"
         value={newLabel}
-        disabled={value !== "new"}
         onChange={(event) => onNewLabelChange(event.target.value)}
-      />
+      /> : null}
     </div>
   );
 }
@@ -2681,96 +2697,86 @@ function ExportView({ dashboard }: { dashboard: Dashboard }) {
 }
 
 function SettingsView({
-  device,
   devices,
   snapshots,
-  onRefresh,
+  importSection,
   onRenameDevice,
   renameError,
 }: {
-  device: DeviceStatus | null;
   devices: DeviceSummary[];
   snapshots: Snapshot[];
-  onRefresh: () => void;
+  importSection: ReactNode;
   onRenameDevice: (deviceId: string, label: string) => Promise<void>;
   renameError?: UiError;
 }) {
-  const candidateDiagnostics = (device?.candidates ?? []).filter(
-    (candidate) => candidate.error || (candidate.exists && !candidate.readable),
-  );
+  const { theme = "system", setTheme, systemTheme } = useTheme();
   const [labels, setLabels] = useState<Record<string, string>>({});
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Settings</CardTitle>
-        <CardAction>
-          <Button variant="outline" onClick={onRefresh}>
-            <RefreshCw data-icon="inline-start" />
-            Refresh now
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="grid gap-6">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <MetadataCard label="Kobo mount path" value={device?.mount_path ?? "Auto-detect"} />
-          <MetadataCard label="Local snapshots" value={snapshots.length} />
-        </div>
-        <div className="grid gap-3">
-          <h4 className="text-sm font-medium">Devices</h4>
+    <div className="grid min-w-0 max-w-4xl gap-4">
+      <Card role="region" aria-labelledby="appearance-label">
+        <CardContent>
+          <Field className="w-full max-w-80 grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-3">
+            <FieldLabel id="appearance-label" htmlFor="color-theme" className="whitespace-nowrap">Appearance</FieldLabel>
+            <Select value={theme} onValueChange={setTheme}>
+              <SelectTrigger id="color-theme" className="w-full min-w-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="system" className="whitespace-nowrap">
+                  {systemTheme ? `Auto (${systemTheme === "dark" ? "Dark" : "Light"})` : "Auto"}
+                </SelectItem>
+                <SelectItem value="light">Light</SelectItem>
+                <SelectItem value="dark">Dark</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        </CardContent>
+      </Card>
+      {importSection}
+      <Card role="region" aria-labelledby="devices-heading">
+        <CardHeader>
+          <CardTitle><h2 id="devices-heading">Devices</h2></CardTitle>
+          <CardDescription>{devices.length} {devices.length === 1 ? "device" : "devices"} · {snapshots.length} local snapshots</CardDescription>
+        </CardHeader>
+        <CardContent>
           {renameError ? <WarningAlert title="Could not save label" {...renameError} /> : null}
           {devices.length === 0 ? (
-            <EmptyPanel icon={<HardDrive />} title="No devices recorded yet" />
+            <p className="text-sm text-muted-foreground">No devices recorded yet</p>
           ) : (
-            <div className="grid gap-3">
+            <div className="divide-y">
               {devices.map((item) => {
                 const draft = labels[item.id] ?? item.label;
                 return (
-                  <Card size="sm" key={item.id}>
-                    <CardHeader>
-                      <div className="min-w-0">
-                        <CardTitle>{item.label}</CardTitle>
-                        <CardDescription>
-                          {item.model ?? "Unknown model"} / {item.snapshot_count} snapshots / {item.backup_count} backups
-                        </CardDescription>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <div key={item.id} className="grid min-w-0 gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] sm:items-center">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{item.model ?? "Unknown model"}</p>
+                      <p className="text-sm text-muted-foreground">{item.snapshot_count} snapshots · {item.backup_count} backups</p>
+                    </div>
+                    <div className="flex min-w-0 items-center gap-2">
                       <Input
+                        className="min-w-0 flex-1"
                         value={draft}
                         aria-label={`Label for ${item.label}`}
                         onChange={(event) => setLabels((current) => ({ ...current, [item.id]: event.target.value }))}
                       />
                       <Button
+                        className="shrink-0"
                         variant="outline"
                         disabled={draft.trim() === "" || draft.trim() === item.label}
                         onClick={() => onRenameDevice(item.id, draft)}
                       >
                         Save label
                       </Button>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 );
               })}
             </div>
           )}
-        </div>
-        {candidateDiagnostics.length > 0 ? (
-          <div className="grid gap-3">
-            <h4 className="text-sm font-medium">Access issues</h4>
-            {candidateDiagnostics.map((candidate) => (
-              <Alert key={candidate.path} variant={candidate.error ? "destructive" : "default"}>
-                <AlertTitle>{candidate.readable ? "Readable" : candidate.exists ? "Blocked" : "Missing"}</AlertTitle>
-                <AlertDescription>
-                  <code>{candidate.path}</code>
-                  {candidate.error ? <div>{candidate.error}</div> : null}
-                </AlertDescription>
-              </Alert>
-            ))}
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -3221,10 +3227,10 @@ export default function App() {
   }, [dashboard.charts.calendar.days, readingDateFilter]);
   const navItems: NavItem[] = [
     { id: "dashboard", label: "Overview", icon: Home },
-    { id: "snapshots", label: "Snapshots", icon: Database, badge: snapshots.length },
-    { id: "backups", label: "Backups", icon: ArchiveRestore, badge: backups.length },
     { id: "books", label: "Books", icon: Library },
     { id: "calendar", label: "Calendar", icon: CalendarDays },
+    { id: "snapshots", label: "Snapshots", icon: Database, badge: snapshots.length },
+    { id: "backups", label: "Backups", icon: ArchiveRestore, badge: backups.length },
     { id: "export", label: "Export", icon: FileUp },
     { id: "settings", label: "Settings", icon: Settings },
   ];
@@ -3245,7 +3251,7 @@ export default function App() {
   }
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    <ThemeProvider attribute="class" storageKey="kostats-theme" defaultTheme="system" enableSystem disableTransitionOnChange>
       <TooltipProvider>
         <SidebarProvider>
         <Sidebar collapsible="icon" variant="inset">
@@ -3289,23 +3295,6 @@ export default function App() {
             />
           </header>
           <div className={cn("grid gap-4 p-4 md:p-6", activeView === "dashboard" && "overview-page gap-3 md:p-5")}>
-            {activeView === "settings" ? (
-              <DeviceBanner
-                status={device}
-                devices={devices}
-                importDevice={importDevice}
-                importDeviceLabel={importDeviceLabel}
-                activeSnapshot={activeSnapshot}
-                latestSnapshot={latestSnapshot}
-                onImportDeviceChange={setImportDevice}
-                onImportDeviceLabelChange={setImportDeviceLabel}
-                onImport={handleImport}
-                onUploadClick={handleUploadRequest}
-                busy={busy}
-                busyAction={busyAction}
-                latestSnapshotMatchesDevice={latestSnapshotMatchesDevice}
-              />
-            ) : null}
             <input
               ref={fileInput}
               type="file"
@@ -3424,10 +3413,26 @@ export default function App() {
             {activeView === "export" ? <ExportView dashboard={dashboard} /> : null}
             {activeView === "settings" ? (
               <SettingsView
-                device={device}
                 devices={devices}
                 snapshots={snapshots}
-                onRefresh={() => refresh().catch(reportRefreshError)}
+                importSection={
+                  <DeviceBanner
+                    status={device}
+                    devices={devices}
+                    importDevice={importDevice}
+                    importDeviceLabel={importDeviceLabel}
+                    activeSnapshot={activeSnapshot}
+                    latestSnapshot={latestSnapshot}
+                    onImportDeviceChange={setImportDevice}
+                    onImportDeviceLabelChange={setImportDeviceLabel}
+                    onImport={handleImport}
+                    onUploadClick={handleUploadRequest}
+                    busy={busy}
+                    busyAction={busyAction}
+                    latestSnapshotMatchesDevice={latestSnapshotMatchesDevice}
+                    onRefresh={() => refresh().catch(reportRefreshError)}
+                  />
+                }
                 onRenameDevice={handleRenameDevice}
                 renameError={actionErrors.rename}
               />
