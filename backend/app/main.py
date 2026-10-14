@@ -17,6 +17,7 @@ from .covers import cover_url_for_md5s, load_cover_manifest, resolve_cover_asset
 from .devices import DeviceRegistry, normalized_label
 from .device import auto_import_from_kobo, device_status, import_from_kobo
 from .errors import BackupError, ImportError, UnsupportedSchemaError
+from .file_cache import file_fingerprint
 from .sqlite_stats import SnapshotMeta, aggregate_dashboards, build_dashboard, empty_dashboard
 from .storage import SnapshotStore, hash_file
 
@@ -47,21 +48,19 @@ def device_registry() -> DeviceRegistry:
     return DeviceRegistry(store().root)
 
 
+@lru_cache(maxsize=128)
+def cached_snapshot_hash(path: Path, fingerprint: tuple) -> str:
+    return hash_file(path)
+
+
 def snapshot_cache_fingerprint(snapshot: SnapshotMeta) -> tuple:
-    path = Path(snapshot.path)
-    stat = path.stat()
-    fingerprint: list[object] = [str(path), stat.st_mtime_ns, stat.st_size, hash_file(path)]
-    if snapshot.sidecar_path:
-        sidecar_path = Path(snapshot.sidecar_path)
-        sidecar_stat = sidecar_path.stat()
-        fingerprint.extend(
-            [
-                str(sidecar_path),
-                sidecar_stat.st_mtime_ns,
-                sidecar_stat.st_size,
-                hash_file(sidecar_path),
-            ]
-        )
+    fingerprint: list[object] = []
+    for value in (snapshot.path, snapshot.sidecar_path):
+        if value is None:
+            continue
+        path = Path(value).absolute()
+        identity = file_fingerprint(path)
+        fingerprint.extend((str(path), identity, cached_snapshot_hash(path, identity)))
     return tuple(fingerprint)
 
 

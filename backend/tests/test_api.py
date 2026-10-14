@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+import pytest
 
 import backend.app.main as main_module
 from backend.app.backups import partial_md5
@@ -831,3 +833,32 @@ def test_restore_preview_warns_when_backup_device_differs(monkeypatch, tmp_path:
 
     assert preview.status_code == 200
     assert preview.json()["device_warning"] is True
+
+
+@pytest.mark.parametrize('changed_file', ['database', 'sidecar'])
+def test_snapshot_fingerprint_reuses_hashes_and_detects_preserved_mtime_edits(monkeypatch, tmp_path: Path, changed_file: str) -> None:
+    source = tmp_path / 'source.sqlite3'
+    create_api_fixture(source)
+    snapshot = SnapshotStore(tmp_path / 'data').import_file(
+        source, source_kind='upload', source_path='source.sqlite3',
+        sidecar_payload=b'{"records": [{"title": "Kindred"}]}',
+    )
+    original_hash = main_module.hash_file
+    reads = []
+    def counted_hash(path):
+        reads.append(path)
+        return original_hash(path)
+    monkeypatch.setattr(main_module, 'hash_file', counted_hash)
+    first = main_module.snapshot_cache_fingerprint(snapshot)
+    assert main_module.snapshot_cache_fingerprint(snapshot) == first
+    assert len(reads) == 2
+    path = Path(snapshot.path if changed_file == 'database' else snapshot.sidecar_path)
+    stat = path.stat()
+    path.write_bytes(path.read_bytes().replace(b'Kindred', b'Parable'))
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert path.stat().st_size == stat.st_size
+    assert main_module.snapshot_cache_fingerprint(snapshot) != first
+    assert len(reads) == 3
+    path.unlink()
+    with pytest.raises(FileNotFoundError):
+        main_module.snapshot_cache_fingerprint(snapshot)
