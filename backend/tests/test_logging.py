@@ -15,7 +15,8 @@ def test_log_level_ignores_invalid_value(monkeypatch) -> None:
     assert log_level() == "INFO"
 
 
-def test_configure_logging_writes_rich_output_to_stderr(capsys) -> None:
+def test_configure_logging_writes_rich_output_to_stderr(capsys, monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("KOSTATS_DATA_DIR", str(tmp_path))
     configure_logging(show_time=False)
 
     logging.getLogger("kostats.test").warning("A useful warning")
@@ -30,4 +31,4 @@ def test_uvicorn_logging_is_safe_for_reload_workers() -> None:
     config = uvicorn_log_config()
 
     assert config["handlers"]["rich"]["()"] == "backend.app.logging.make_rich_handler"
-    assert config["root"]["handlers"] == ["rich"]
+    assert config["root"]["handlers"] == ["rich", "persistent"]

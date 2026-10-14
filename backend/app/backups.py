@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .diagnostics import observed
+
 import gzip
 import hashlib
 import json
@@ -394,6 +396,7 @@ class RecoveryBackupStore:
         backup = next((item for item in self.load_index()["backups"] if item["id"] == identifier), None)
         return self.with_device_defaults(backup) if backup else None
 
+    @observed("backups.create_from_kobo")
     def create_from_kobo(
         self,
         volume: Path | None = None,
@@ -647,6 +650,7 @@ class RecoveryBackupStore:
             **matches,
         }
 
+    @observed("backups.restore")
     def restore(
         self,
         identifier: str,

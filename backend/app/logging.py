@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import os
 
+from .diagnostics import PersistentHandler
+
 from rich.console import Console
 from rich.logging import RichHandler
 
@@ -33,7 +35,7 @@ def configure_logging(*, show_time: bool = True) -> None:
     logging.basicConfig(
         datefmt="[%X]",
         format="%(message)s",
-        handlers=[handler],
+        handlers=[handler, PersistentHandler()],
         level=log_level(),
         force=True,
     )
@@ -55,14 +57,15 @@ def uvicorn_log_config() -> dict[str, object]:
         "version": 1,
         "disable_existing_loggers": False,
         "handlers": {
+            "persistent": {"()": "backend.app.diagnostics.PersistentHandler"},
             "rich": {
                 "()": "backend.app.logging.make_rich_handler",
             },
         },
         "loggers": {
-            "uvicorn": {"handlers": ["rich"], "level": level, "propagate": False},
+            "uvicorn": {"handlers": ["rich", "persistent"], "level": level, "propagate": False},
             "uvicorn.error": {"level": level},
-            "uvicorn.access": {"handlers": ["rich"], "level": level, "propagate": False},
+            "uvicorn.access": {"handlers": ["rich", "persistent"], "level": level, "propagate": False},
         },
-        "root": {"handlers": ["rich"], "level": level},
+        "root": {"handlers": ["rich", "persistent"], "level": level},
     }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .diagnostics import observed, record
+
 import sqlite3
 import tempfile
 import threading
@@ -100,6 +102,7 @@ def device_status(volume: Path | None = None) -> dict[str, Any]:
     }
 
 
+@observed("device.import_from_kobo")
 def import_from_kobo(store: SnapshotStore, volume: Path | None = None, device: dict[str, Any] | None = None) -> dict[str, Any]:
     status = device_status(volume)
     if not status["mounted"]:
@@ -118,8 +121,8 @@ def import_from_kobo(store: SnapshotStore, volume: Path | None = None, device: d
         sidecar_snapshot = build_sidecar_snapshot(root)
         try:
             populate_cover_cache(root, sidecar_snapshot["records"], store.root)
-        except Exception:
-            pass
+        except Exception as exc:
+            record("operation", "covers.populate", outcome="error", exception_type=type(exc).__name__)
         sidecar_payload = serialize_sidecar_snapshot(sidecar_snapshot)
         meta = store.import_file(
             Path(status["selected_path"]),
@@ -191,6 +194,7 @@ def resolve_auto_import_device(
     return detected_device
 
 
+@observed("device.auto_import_from_kobo")
 def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> dict[str, Any]:
     status = device_status(volume)
     latest = store.latest()
@@ -230,8 +234,8 @@ def auto_import_from_kobo(store: SnapshotStore, volume: Path | None = None) -> d
                 result["covers_changed"] = populate_cover_cache(
                     Path(status["mount_path"]), sidecar_snapshot["records"], store.root
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                record("operation", "covers.populate", outcome="error", exception_type=type(exc).__name__)
             sidecar_payload = serialize_sidecar_snapshot(sidecar_snapshot)
             prepared_sidecars.write_bytes(sidecar_payload)
             prepared_sidecar_hash = sidecar_snapshot_hash(sidecar_payload)

@@ -59,3 +59,28 @@ npm test --prefix frontend
 ## Local data
 
 Imported database and sidecar metadata snapshots are stored under `data/snapshots/`, with metadata in `data/manifest.json`. Recovery archives and v2 dictionary objects are stored under `data/backups/` with restrictive local permissions. Archives may contain credentials from KOReader integrations. The entire `data/` directory is ignored by Git.
+
+## Internal diagnostics for agents
+
+The backend records private diagnostics in `data/diagnostics/events.sqlite3`
+(or beneath `KOSTATS_DATA_DIR`). No diagnostics routes or UI controls exist, and
+nothing is sent externally. Run `uv run python -m backend.app.diagnostics` for a
+read-only JSON summary of operation outcomes, request status counts, and mean,
+p95, and maximum timings. Agents can query the SQLite `events` table directly
+for timestamps, process run IDs, log records, import reasons, and dashboard
+book/unknown-status counts. Compare slow routes and recurring errors with the
+corresponding operations before proposing fixes or features; route counts show
+backend usage, not browser interactions or user intent.
+
+Retention is the latest 20,000 records and 30 days, pruned on each write. Payloads
+are capped at 8 KiB; SQLite reuses freed pages, so the database can retain its
+high-water size. Each record includes a run ID to distinguish server restarts.
+The directory and database are created with private permissions on POSIX.
+Request records use route templates and exclude client addresses, query strings,
+headers, bodies, and responses. Operation metrics exclude book titles, paths,
+and device labels. Persistent application logs retain their existing messages;
+exception frames exclude locals and exception values. Do not add credentials or
+book metadata to log messages. Raw Uvicorn access logs remain console-only.
+Diagnostic write failures produce a throttled stderr warning and do not fail
+application operations. Metrics cover backend requests, imports, backup/restore
+operations, and dashboard builds; frontend-only failures are not collected.

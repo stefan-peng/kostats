@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .diagnostics import observed
+
 import calendar
 import hashlib
 import json
@@ -403,6 +405,7 @@ def recent_book_activity(
     ]
 
 
+@observed("sqlite_stats.build_dashboard")
 def build_dashboard(
     path: Path,
     snapshot: SnapshotMeta | None = None,

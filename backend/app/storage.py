@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .diagnostics import observed
+
 import json
 import hashlib
 import shutil
@@ -116,6 +118,7 @@ class SnapshotStore:
             return None
         return hash_file(path)
 
+    @observed("storage.import_file")
     def import_file(
         self,
         source: Path,
@@ -164,6 +167,7 @@ class SnapshotStore:
             device=device,
         )
 
+    @observed("storage.import_snapshot_copy")
     def import_snapshot_copy(
         self,
         source: Path,

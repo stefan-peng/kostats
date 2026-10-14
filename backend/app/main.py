@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .diagnostics import RequestDiagnostics
 from .backups import RecoveryBackupStore
 from .covers import cover_url_for_md5s, load_cover_manifest, resolve_cover_asset
 from .devices import DeviceRegistry, normalized_label
@@ -21,6 +22,7 @@ from .storage import SnapshotStore, hash_file
 
 
 app = FastAPI(title="kostats", version="0.1.0")
+app.add_middleware(RequestDiagnostics)
 frontend_origins = ["http://127.0.0.1:5173", "http://localhost:5173"]
 if configured_origin := os.environ.get("KOSTATS_FRONTEND_ORIGIN"):
     frontend_origins.append(configured_origin)
