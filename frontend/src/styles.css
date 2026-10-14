@@ -7,7 +7,7 @@
 
 :root {
   color-scheme: light;
-  --background: #f8faf8;
+  --background: #edf2ee;
   --foreground: #102018;
   --card: #ffffff;
   --card-foreground: #102018;
@@ -22,8 +22,8 @@
   --accent: #e7f2e8;
   --accent-foreground: #146128;
   --destructive: #9f2d20;
-  --border: #d9e0da;
-  --input: #d9e0da;
+  --border: #c5d0c8;
+  --input: #7c8a80;
   --ring: #207a3a;
   --chart-1: #207a3a;
   --chart-2: #4c995b;
@@ -47,6 +47,10 @@
   --sidebar-accent-foreground: #146128;
   --sidebar-border: #d9e0da;
   --sidebar-ring: #207a3a;
+  --shell: #dfe7e1;
+  --panel: #f4f7f4;
+  --panel-shadow: 0 8px 24px rgb(16 32 24 / 0.16), 0 2px 6px rgb(16 32 24 / 0.1);
+  --card-shadow: 0 6px 16px rgb(16 32 24 / 0.12), 0 2px 4px rgb(16 32 24 / 0.08);
   --heatmap-empty: var(--muted);
   --heatmap-1: var(--chart-5);
   --heatmap-2: var(--chart-3);
@@ -58,9 +62,9 @@
   color-scheme: dark;
   --background: #0d1110;
   --foreground: #e6eee8;
-  --card: #151b18;
+  --card: #243129;
   --card-foreground: #e6eee8;
-  --popover: #151b18;
+  --popover: #243129;
   --popover-foreground: #e6eee8;
   --primary: #69ce7b;
   --primary-foreground: #0d1110;
@@ -71,8 +75,8 @@
   --accent: #173322;
   --accent-foreground: #94e6a2;
   --destructive: #f18c80;
-  --border: #2d3932;
-  --input: #2d3932;
+  --border: #405247;
+  --input: #718778;
   --ring: #69ce7b;
   --chart-1: #69ce7b;
   --chart-2: #91e29d;
@@ -95,6 +99,10 @@
   --sidebar-accent-foreground: #94e6a2;
   --sidebar-border: #2d3932;
   --sidebar-ring: #69ce7b;
+  --shell: #080c09;
+  --panel: #151e18;
+  --panel-shadow: 0 8px 24px rgb(0 0 0 / 0.65), 0 2px 6px rgb(0 0 0 / 0.5);
+  --card-shadow: 0 6px 16px rgb(0 0 0 / 0.45), 0 2px 4px rgb(0 0 0 / 0.35);
 }
 
 .device-pill {
@@ -344,4 +352,26 @@
 
 .overview-page [data-slot="table-head"] {
   font-weight: 500;
+}
+
+/* Keep app surface and interaction styling outside the shared primitives. */
+.app-shell [data-slot="sidebar-rail"] {
+  cursor: pointer;
+}
+
+.app-shell [data-slot="card"] {
+  box-shadow: 0 0 0 1px var(--border), var(--card-shadow);
+}
+
+.app-shell[data-slot="sidebar-wrapper"] {
+  background: var(--shell);
+}
+
+.app-shell [data-slot="sidebar-inner"] {
+  background: var(--shell);
+}
+
+.app-shell .app-panel {
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--border), var(--panel-shadow);
 }
