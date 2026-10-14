@@ -617,6 +617,29 @@ describe("App", () => {
     expect(screen.getByLabelText("Import device")).toHaveTextContent("Auto-detected");
   });
 
+  it("resets the content scroll on navigation and history changes while keeping the toolbar outside it", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return { mounted: false, database_found: false, candidates: [] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      return populatedDashboard;
+    });
+    render(<App />);
+    await screen.findByText("Daily reading");
+    const content = screen.getByRole("region", { name: "Page content" });
+    expect(content).toHaveAttribute("tabindex", "0");
+    expect(content).not.toContainElement(screen.getByLabelText("Page toolbar"));
+    content.scrollTop = 400;
+    await userEvent.click(screen.getByRole("link", { name: "Books" }));
+    expect(content.scrollTop).toBe(0);
+    content.scrollTop = 200;
+    act(() => {
+      window.history.replaceState(null, "", "#dashboard");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(content.scrollTop).toBe(0);
+    expect(screen.getByLabelText("Page toolbar")).toHaveTextContent("Overview");
+  });
+
   it.each(["Overview", "Books", "Calendar", "Snapshots", "Backups", "Settings", "Import / Export"])(
     "keeps import actions out of the %s toolbar", async (view) => {
       mockFetch((url) => {

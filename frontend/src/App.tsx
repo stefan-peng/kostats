@@ -1284,7 +1284,7 @@ function isUploadAssignmentReady(value: string, label: string) {
 
 function PrimaryMetric({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="min-w-0 border-border/70 py-1 sm:border-l sm:pl-6 sm:first:border-l-0 sm:first:pl-0">
+    <div className="primary-metric min-w-0 border-border/70 py-1">
       <div className="font-heading text-3xl leading-none text-primary tabular-nums lg:text-4xl">{value}</div>
       <div className="mt-2 text-sm text-muted-foreground">{label}</div>
     </div>
@@ -2002,7 +2002,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
   return (
     <>
       <section className="grid gap-5">
-        <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:grid-cols-4">
+        <div className="primary-metrics grid grid-cols-2 gap-x-6 gap-y-5">
           <PrimaryMetric label="Total reading time" value={dashboard.summary.total_time_label} />
           <PrimaryMetric label="Days read" value={dashboard.summary.reading_days.toLocaleString()} />
           <PrimaryMetric label="Books in library" value={dashboard.summary.books.toLocaleString()} />
@@ -2702,7 +2702,7 @@ function SettingsView({
               {devices.map((item) => {
                 const draft = labels[item.id] ?? item.label;
                 return (
-                  <div key={item.id} className="grid min-w-0 gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] sm:items-center">
+                  <div key={item.id} className="device-label-row grid min-w-0 gap-3 py-4 first:pt-0 last:pb-0">
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{item.model ?? "Unknown model"}</p>
                       <p className="text-sm text-muted-foreground">{item.snapshot_count} snapshots · {item.backup_count} backups</p>
@@ -2832,6 +2832,11 @@ export default function App() {
   const busy = busyAction !== null;
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const pageContent = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (pageContent.current) pageContent.current.scrollTop = 0;
+  }, [activeView]);
   const pendingUploadAssignment = useRef<DeviceAssignment | undefined>(undefined);
   const selectedSnapshotId = useRef<string | null>(null);
   const deviceStatusKey = useRef<string | null>(null);
@@ -3206,7 +3211,7 @@ export default function App() {
   return (
     <ThemeProvider attribute="class" storageKey="kostats-theme" defaultTheme="system" enableSystem disableTransitionOnChange>
       <TooltipProvider>
-        <SidebarProvider>
+        <SidebarProvider className="app-shell">
         <Sidebar collapsible="icon" variant="inset">
           <SidebarHeader>
             <AppSidebarBrand onSelect={() => selectView("dashboard")} />
@@ -3221,7 +3226,7 @@ export default function App() {
           </SidebarContent>
           <SidebarRail />
         </Sidebar>
-        <SidebarInset>
+        <SidebarInset className="app-panel">
           <header aria-label="Page toolbar" className="page-toolbar flex min-h-14 shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-2">
             <div className="page-toolbar__heading flex min-w-0 items-center gap-2">
               <SidebarTrigger className="-ml-1" />
@@ -3247,7 +3252,8 @@ export default function App() {
               compact
             />
           </header>
-          <div className={cn("grid gap-4 p-4 md:p-6", activeView === "dashboard" && "overview-page gap-3 md:p-5")}>
+          <div ref={pageContent} className="page-content" role="region" aria-label="Page content" tabIndex={0}>
+          <div className={cn("grid min-w-0 gap-4 p-4 md:p-6", activeView === "dashboard" && "overview-page gap-3 md:p-5")}>
             <input
               ref={fileInput}
               type="file"
@@ -3406,6 +3412,7 @@ export default function App() {
                 renameError={actionErrors.rename}
               />
             ) : null}
+          </div>
           </div>
         </SidebarInset>
         <Toaster />

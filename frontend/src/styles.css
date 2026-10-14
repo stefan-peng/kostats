@@ -102,6 +102,46 @@
   background-color: color-mix(in srgb, var(--device-color) 16%, transparent);
 }
 
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.page-content {
+  container: page-content / inline-size;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+
+@container page-content (min-width: 40rem) {
+  .primary-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .primary-metric:not(:first-child) {
+    border-left-width: 1px;
+    padding-left: 1.5rem;
+  }
+}
+
+@container page-content (min-width: 48rem) {
+  .device-label-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 24rem);
+    align-items: center;
+  }
+}
+
 .page-toolbar {
   container: page-toolbar / inline-size;
 }
