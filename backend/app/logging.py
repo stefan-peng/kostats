@@ -17,6 +17,12 @@ def log_level() -> str:
     return value if value in logging.getLevelNamesMapping() else DEFAULT_LOG_LEVEL
 
 
+def watcher_log_level() -> str:
+    # Raw filesystem event counts are useful only when debugging the watcher.
+    level = log_level()
+    return "WARNING" if logging.getLevelNamesMapping()[level] == logging.INFO else level
+
+
 def make_rich_handler(*, show_time: bool | None = None) -> RichHandler:
     if show_time is None:
         show_time = os.environ.get("KOSTATS_MANAGED_PROCESS") != "1"
@@ -47,6 +53,7 @@ def configure_logging(*, show_time: bool = True) -> None:
         logger.handlers.clear()
         logger.propagate = True
 
+    logging.getLogger("watchfiles").setLevel(watcher_log_level())
     logging.captureWarnings(True)
 
 
@@ -63,6 +70,7 @@ def uvicorn_log_config() -> dict[str, object]:
             },
         },
         "loggers": {
+            "watchfiles": {"level": watcher_log_level()},
             "uvicorn": {"handlers": ["rich", "persistent"], "level": level, "propagate": False},
             "uvicorn.error": {"level": level},
             "uvicorn.access": {"handlers": ["rich", "persistent"], "level": level, "propagate": False},
