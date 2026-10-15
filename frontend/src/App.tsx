@@ -285,6 +285,7 @@ type CalendarCell = {
 };
 
 const chartConfig = {
+  pages: { label: "Pages covered", color: "var(--chart-1)" },
   minutes: {
     label: "Reading time",
     color: "var(--chart-1)",
@@ -622,8 +623,9 @@ function formatMinutes(minutes: number) {
   return remainder ? `${hours}h ${String(remainder).padStart(2, "0")}m` : `${hours}h`;
 }
 
-function formatChartAxisValue(value: number, unit: "minutes" | "hours") {
+function formatChartAxisValue(value: number, unit: "minutes" | "hours" | "pages") {
   const rounded = Math.round(value * 10) / 10;
+  if (unit === "pages") return `${rounded}p`;
   if (unit === "minutes") {
     return rounded >= 60 ? `${Math.round((rounded / 60) * 10) / 10}h` : `${rounded}m`;
   }
@@ -638,15 +640,36 @@ function formatDurationLabel(seconds: number) {
   return `${minutes}m`;
 }
 
+function formatCoverage(value: number | null | undefined, suffix = "%") {
+  if (value == null) return "—";
+  if (value > 0 && value < 0.1) return `<0.1${suffix}`;
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}${suffix}`;
+}
+
 function formatPace(seconds: number | null) {
   if (seconds == null) return "—";
-  return `${Math.max(1, Math.round(seconds / 60))} min/page`;
+  const pace = seconds < 60
+    ? `${Math.max(1, Math.round(seconds))}s`
+    : `${(seconds / 60).toLocaleString(undefined, { maximumFractionDigits: 1 })} min`;
+  return `${pace} / 1%`;
+}
+
+function ChartMetricSelect({ value, onChange, label }: {
+  value: "time" | "pages"; onChange: (value: "time" | "pages") => void; label: string;
+}) {
+  return <Select value={value} onValueChange={(next) => onChange(next as "time" | "pages")}>
+    <SelectTrigger aria-label={label} size="sm" className="w-28"><SelectValue /></SelectTrigger>
+    <SelectContent><SelectGroup>
+      <SelectItem value="time">Time</SelectItem>
+      <SelectItem value="pages">Pages</SelectItem>
+    </SelectGroup></SelectContent>
+  </Select>;
 }
 
 function estimateDescription(book: BookStats) {
   if (book.estimated_remaining_seconds != null) return `~${formatDurationLabel(book.estimated_remaining_seconds)} left`;
   if (effectiveStatus(book) !== "reading") return "Only shown for books in progress";
-  if (!book.total_pages || !book.max_page) return "Need a page total and current page";
+  if (!book.total_pages || book.progress == null) return "Need reading coverage and current position";
   return "Not enough data for an estimate";
 }
 
@@ -691,6 +714,18 @@ function SessionTable({
         size: 110,
         minSize: 90,
         maxSize: 180,
+      },
+      {
+        accessorKey: "coverage_percent",
+        header: "Coverage",
+        cell: ({ row }) => <span title="Book percentage covered by recorded reading; excludes skipped pages">{formatCoverage(row.original.coverage_percent)}</span>,
+        size: 110, minSize: 95, maxSize: 170,
+      },
+      {
+        accessorKey: "pages",
+        header: "Pages covered",
+        cell: ({ row }) => <span title="Coverage in each book's current pagination">{formatCoverage(row.original.pages, "")}</span>,
+        size: 130, minSize: 110, maxSize: 190,
       },
       {
         accessorKey: "elapsed_seconds",
@@ -753,16 +788,18 @@ function SessionTable({
 function BookActivityChart({
   activity,
   devices,
+  metric,
 }: {
   activity: BookStats["recent_activity"] | undefined;
   devices: BookStats["recent_activity_devices"];
+  metric: "time" | "pages";
 }) {
   const data = activity ?? [];
   const activityDevices = devices ?? [];
   const config = Object.fromEntries(
     activityDevices.map((device) => [device.id, { label: device.label, color: deviceColor(device.id) }]),
   ) satisfies ChartConfig;
-  const splitByDevice = activityDevices.length > 0;
+  const splitByDevice = metric === "time" && activityDevices.length > 0;
   const stackKeys = activityDevices.map((device) => device.id);
   const shape = stackedBarShape(stackKeys);
   return (
@@ -777,7 +814,7 @@ function BookActivityChart({
         <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} interval="preserveStartEnd" />
         <YAxis
           domain={[0, "dataMax"]}
-          tickFormatter={(value) => formatChartAxisValue(Number(value), "minutes")}
+          tickFormatter={(value) => formatChartAxisValue(Number(value), metric === "pages" ? "pages" : "minutes")}
           tickLine={false}
           axisLine={false}
           tickMargin={8}
@@ -795,8 +832,9 @@ function BookActivityChart({
                   <span className="font-medium">
                     {splitByDevice
                       ? `${config[String(_name)]?.label ?? String(_name)} · ${formatMinutes(Number(value))}`
-                      : formatMinutes(Number(value))}
+                      : metric === "pages" ? `${formatCoverage(Number(value), "")} pages` : formatMinutes(Number(value))}
                   </span>
+                  <span className="text-muted-foreground">{metric === "pages" ? formatMinutes(Number(item.payload.minutes)) : `${formatCoverage(Number(item.payload.pages), "")} pages covered`}</span>
                 </div>
               )}
             />
@@ -812,7 +850,7 @@ function BookActivityChart({
             isAnimationActive={false}
             shape={shape}
           />
-        )) : <Bar dataKey="minutes" barSize={verticalBarSizing.compact} fill="var(--color-minutes)" isAnimationActive={false} radius={4} />}
+        )) : <Bar dataKey={metric === "pages" ? "pages" : "minutes"} barSize={verticalBarSizing.compact} fill="var(--color-minutes)" isAnimationActive={false} radius={4} />}
       </BarChart>
     </ChartContainer>
   );
@@ -1313,7 +1351,7 @@ function ReadingBarChart({
 }: {
   title: string;
   data: Array<Record<string, string | number>>;
-  valueKey: "minutes" | "hours";
+  valueKey: "minutes" | "hours" | "pages";
   formatValue: (value: number) => string;
   dominant?: boolean;
 }) {
@@ -1358,6 +1396,9 @@ function ReadingBarChart({
                       <div className="grid gap-1">
                         <span className="text-muted-foreground">{String(item.payload.label)}</span>
                         <span className="font-medium">{formatValue(Number(value))}</span>
+                        <span className="text-muted-foreground">{valueKey === "pages"
+                          ? formatDurationLabel(Number(item.payload.minutes ?? Number(item.payload.hours) * 60) * 60)
+                          : `${formatCoverage(Number(item.payload.pages), "")} pages covered`}</span>
                       </div>
                     )}
                   />
@@ -1438,10 +1479,11 @@ function DeviceStackedBarChart({
                 content={
                   <ChartTooltipContent
                     hideZeroValues
-                    formatter={(value, name) => (
+                    formatter={(value, name, item) => (
                       <div className="grid gap-1">
                         <span className="text-muted-foreground">{config[String(name)]?.label ?? String(name)}</span>
                         <span className="font-medium">{formatValue(Number(value))}</span>
+                        <span className="text-muted-foreground">{formatCoverage(Number(item.payload.pages), "")} pages covered · all devices</span>
                       </div>
                     )}
                   />
@@ -1553,7 +1595,7 @@ function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]
       },
       {
         accessorKey: "pages",
-        header: "Pages",
+        header: "Pages seen",
         cell: ({ row }) => row.original.pages.toLocaleString(),
         size: 100,
         minSize: 80,
@@ -1621,6 +1663,7 @@ function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]
 
 function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOpenChange: (open: boolean) => void }) {
   const recentSessions = book?.recent_sessions ?? [];
+  const [activityMetric, setActivityMetric] = useState<"time" | "pages">("time");
   return (
     <Dialog open={book != null} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[min(90vh,780px)] overflow-y-auto sm:max-w-5xl">
@@ -1645,7 +1688,7 @@ function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOp
               <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <div><p className="text-xs text-muted-foreground">Reading time</p><p className="font-medium">{book.time_label}</p></div>
                 <div><p className="text-xs text-muted-foreground">Pages</p><p className="font-medium">{formatPageProgress(book)}</p></div>
-                <div><p className="text-xs text-muted-foreground">Current pace</p><p className="font-medium">{formatPace(book.pace_seconds_per_page)}</p></div>
+                <div><p className="text-xs text-muted-foreground">Average pace</p><p className="font-medium">{formatPace(book.pace_seconds_per_percent)}</p></div>
                 <div><p className="text-xs text-muted-foreground">Annotations</p><p className="font-medium">{book.highlight_count + book.note_count}</p></div>
                 <div><p className="text-xs text-muted-foreground">Last opened</p><p className="font-medium">{formatDateTime(book.last_open)}</p></div>
               </CardContent>
@@ -1655,9 +1698,10 @@ function BookDetailDialog({ book, onOpenChange }: { book: BookStats | null; onOp
                 <CardHeader>
                   <CardTitle>Recent reading</CardTitle>
                   <CardDescription>Last 5 days</CardDescription>
+                  <ChartMetricSelect value={activityMetric} onChange={setActivityMetric} label="Book activity metric" />
                 </CardHeader>
                 <CardContent className="grid gap-4">
-                  <BookActivityChart activity={book.recent_activity} devices={book.recent_activity_devices} />
+                  <BookActivityChart activity={book.recent_activity} devices={book.recent_activity_devices} metric={activityMetric} />
                 </CardContent>
               </Card>
               <Card>
@@ -1994,6 +2038,7 @@ function BooksView({
 
 function DashboardView({ dashboard }: { dashboard: Dashboard }) {
   const [selectedBook, setSelectedBook] = useState<BookStats | null>(null);
+  const [readingMetric, setReadingMetric] = useState<"time" | "pages">("time");
   const streakLabel =
     dashboard.summary.current_streak === 1
       ? "1 day"
@@ -2006,7 +2051,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
           <PrimaryMetric label="Total reading time" value={dashboard.summary.total_time_label} />
           <PrimaryMetric label="Days read" value={dashboard.summary.reading_days.toLocaleString()} />
           <PrimaryMetric label="Books in library" value={dashboard.summary.books.toLocaleString()} />
-          <PrimaryMetric label="Pages read" value={dashboard.summary.pages.toLocaleString()} />
+          <PrimaryMetric label="Pages seen" value={dashboard.summary.pages.toLocaleString()} />
         </div>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t pt-3 text-sm" aria-label="Additional reading metrics">
           <span><span className="text-muted-foreground">Current streak</span> <strong className="ml-1 font-medium">{streakLabel}</strong></span>
@@ -2022,7 +2067,10 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
         data-testid="dashboard-primary-insights"
         className="grid min-w-0 gap-4"
       >
-        {dashboard.charts.devices?.length && dashboard.charts.daily_by_device?.length ? (
+        <div className="flex justify-end">
+          <ChartMetricSelect value={readingMetric} onChange={setReadingMetric} label="Reading chart metric" />
+        </div>
+        {readingMetric === "time" && dashboard.charts.devices?.length && dashboard.charts.daily_by_device?.length ? (
           <DeviceStackedBarChart
             title="Daily reading"
             data={dashboard.charts.daily_by_device}
@@ -2034,8 +2082,8 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
           <ReadingBarChart
             title="Daily reading"
             data={dashboard.charts.daily}
-            valueKey="minutes"
-            formatValue={(minutes) => formatDurationLabel(minutes * 60)}
+            valueKey={readingMetric === "pages" ? "pages" : "minutes"}
+            formatValue={(value) => readingMetric === "pages" ? `${formatCoverage(value, "")} pages` : formatDurationLabel(value * 60)}
             dominant
           />
         )}
@@ -2043,7 +2091,7 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
 
       <section className="grid gap-4">
         <div className="grid items-start gap-4 xl:grid-cols-2">
-          {dashboard.charts.devices?.length && dashboard.charts.monthly_by_device?.length ? (
+          {readingMetric === "time" && dashboard.charts.devices?.length && dashboard.charts.monthly_by_device?.length ? (
             <DeviceStackedBarChart
               title="Monthly reading by device"
               data={dashboard.charts.monthly_by_device}
@@ -2054,8 +2102,8 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
             <ReadingBarChart
               title="Monthly reading"
               data={dashboard.charts.monthly}
-              valueKey="hours"
-              formatValue={(hours) => formatDurationLabel(hours * 3600)}
+              valueKey={readingMetric === "pages" ? "pages" : "hours"}
+              formatValue={(value) => readingMetric === "pages" ? `${formatCoverage(value, "")} pages` : formatDurationLabel(value * 3600)}
             />
           )}
           <TopBooksChart data={dashboard.charts.top_books} books={dashboard.books} onSelectBook={setSelectedBook} />

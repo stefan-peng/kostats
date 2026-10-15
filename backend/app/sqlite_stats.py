@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
+from .reading_progress import coverage, estimate_book, merge_intervals, normalized_pages, page_interval
 from .errors import UnsupportedSchemaError
 from .sidecars import load_sidecar_snapshot
 
@@ -346,45 +347,51 @@ SESSION_GAP_SECONDS = 15 * 60
 def build_sessions(
     events: list[dict[str, Any]],
     merged_book_ids_by_source: dict[str, str],
+    page_totals: dict[str, int | None],
 ) -> list[dict[str, Any]]:
-    """Group valid KOReader page events into global reading sessions."""
-    sessions: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-
+    """Group accepted visits into sittings, retaining each book's own time/coverage."""
+    groups: list[list[dict[str, Any]]] = []
+    ended_at = None
     for event in sorted(events, key=lambda item: (item["started_at"], item["book_id"])):
-        started_at = event["started_at"]
-        ended_at = event["ended_at"]
-        if current is None or (started_at - current["ended_at"]).total_seconds() > SESSION_GAP_SECONDS:
-            if current is not None:
-                sessions.append(current)
-            current = {
-                "started_at": started_at,
-                "ended_at": ended_at,
-                "active_seconds": 0.0,
-                "event_count": 0,
-                "book_ids": set(),
-            }
+        if ended_at is None or (event["started_at"] - ended_at).total_seconds() > SESSION_GAP_SECONDS:
+            groups.append([])
+            ended_at = event["ended_at"]
+        groups[-1].append(event)
+        ended_at = max(ended_at, event["ended_at"])
 
-        current["ended_at"] = max(current["ended_at"], ended_at)
-        current["active_seconds"] += event["duration"]
-        current["event_count"] += 1
-        current["book_ids"].add(merged_book_ids_by_source[event["book_id"]])
-
-    if current is not None:
-        sessions.append(current)
-
-    return [
-        {
-            "started_at": session["started_at"].isoformat(),
-            "ended_at": session["ended_at"].isoformat(),
-            "active_seconds": round(session["active_seconds"], 2),
-            "elapsed_seconds": round((session["ended_at"] - session["started_at"]).total_seconds(), 2),
-            "event_count": session["event_count"],
-            "book_ids": sorted(session["book_ids"], key=book_id_sort_key),
-            "book_count": len(session["book_ids"]),
+    def summarize(visits, book_id=None):
+        started = min(e["started_at"] for e in visits)
+        ended = max(e["ended_at"] for e in visits)
+        intervals = [e["interval"] for e in visits if e["interval"] is not None]
+        complete = len(intervals) == len(visits)
+        return {
+            "started_at": started.isoformat(), "ended_at": ended.isoformat(),
+            "active_seconds": round(sum(e["duration"] for e in visits), 2),
+            "elapsed_seconds": round((ended - started).total_seconds(), 2),
+            "event_count": len(visits),
+            "coverage_percent": coverage(intervals) * 100 if complete and book_id else None,
+            "pages": round(coverage(intervals) * page_totals[book_id], 2)
+                if complete and book_id and page_totals.get(book_id) else None,
         }
-        for session in sessions
-    ]
+
+    sessions = []
+    for visits in groups:
+        by_book: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for event in visits:
+            by_book[merged_book_ids_by_source[event["book_id"]]].append(event)
+        book_sessions = [
+            {**summarize(book_visits, book_id), "book_ids": [book_id], "book_count": 1}
+            for book_id, book_visits in sorted(by_book.items(), key=lambda item: book_id_sort_key(item[0]))
+        ]
+        sessions.append({
+            **summarize(visits),
+            "book_ids": [s["book_ids"][0] for s in book_sessions], "book_count": len(book_sessions),
+            "pages": round(sum(s["pages"] for s in book_sessions), 2)
+                if all(s["pages"] is not None for s in book_sessions) else None,
+            "coverage_percent": book_sessions[0]["coverage_percent"] if len(book_sessions) == 1 else None,
+            "book_sessions": book_sessions,
+        })
+    return sessions
 
 
 def recent_book_activity(
@@ -531,6 +538,7 @@ def build_dashboard(
                 "started_at": started,
                 "ended_at": started + timedelta(seconds=duration),
                 "duration": duration,
+                "interval": page_interval(row["page"], row["event_total_pages"] if total_pages_col else row["book_pages"]),
             }
         )
 
@@ -550,7 +558,7 @@ def build_dashboard(
                 "last_open_timestamp": 0.0,
                 "time_seconds": 0.0,
                 "day_seconds": defaultdict(float),
-                "pages_seen": set(),
+                "coverage_intervals": [], "position_timestamp": 0.0,
                 "max_page": None,
                 "total_pages": None,
                 "sidecar": None,
@@ -561,30 +569,19 @@ def build_dashboard(
         book["time_seconds"] += duration
         book["day_seconds"][reading_date] += duration
 
-        opened = local_dt(row["last_open"]) or started
+        opened = max(local_dt(row["last_open"]) or started, started)
         opened_ts = opened.timestamp()
         if opened_ts > book["last_open_timestamp"]:
             book["last_open_timestamp"] = opened_ts
 
-        page = row["page"]
-        if page is not None:
-            try:
-                page_int = int(page)
-                if page_int > 0:
-                    book["pages_seen"].add(page_int)
-                    book["max_page"] = max(book["max_page"] or 0, page_int)
-            except (TypeError, ValueError):
-                pass
-
-        for value in (row["event_total_pages"], row["book_pages"]):
-            if value is None:
-                continue
-            try:
-                pages = int(value)
-            except (TypeError, ValueError):
-                continue
-            if pages > 0:
-                book["total_pages"] = max(book["total_pages"] or 0, pages)
+        interval = session_events[-1]["interval"]
+        if interval is not None:
+            book["coverage_intervals"].append(interval)
+            if started.timestamp() >= book["position_timestamp"]:
+                book["position_timestamp"] = started.timestamp()
+                book["position_fraction"] = interval[1]
+                book["total_pages"] = int(row["book_pages"] if page_interval(1, row["book_pages"]) else row["event_total_pages"])
+                book["max_page"] = min(book["total_pages"], max(1, round(interval[1] * book["total_pages"])))
 
     # Include database-only books and metadata-only books without inventing events.
     def seed_book(book_id: str, title: Any, authors: Any, md5: Any, series: Any, language: Any, sidecar=None):
@@ -595,7 +592,7 @@ def build_dashboard(
             "md5": display_text(md5, ""), "series": display_text(series, ""),
             "language": display_text(language, ""), "series_key": optional_metadata_key(series),
             "language_key": language_identity_key(language), "last_open_timestamp": 0.0,
-            "time_seconds": 0.0, "day_seconds": defaultdict(float), "pages_seen": set(),
+            "time_seconds": 0.0, "day_seconds": defaultdict(float), "coverage_intervals": [], "position_timestamp": 0.0,
             "max_page": None, "total_pages": None, "sidecar": sidecar,
         }
 
@@ -682,16 +679,7 @@ def build_dashboard(
             merged_book_ids_by_source[source_book_id] = merged_book_id
         source_md5s = sorted({book["md5"] for book in group if book["md5"]})
         latest_book = max(group, key=lambda item: (item["last_open_timestamp"], item["id"]))
-        position_book = max(
-            group,
-            key=lambda item: (
-                (item["max_page"] / item["total_pages"])
-                if item["max_page"] and item["total_pages"]
-                else -1,
-                item["last_open_timestamp"],
-                item["id"],
-            ),
-        )
+        position_book = max(group, key=lambda item: (item["position_timestamp"], item["last_open_timestamp"], item["id"]))
         matched_sidecars = [book["sidecar"] for book in group if book["sidecar"] is not None]
         sidecar = max(
             matched_sidecars,
@@ -701,13 +689,10 @@ def build_dashboard(
                 *sidecar_sort_key(record),
             ),
         ) if matched_sidecars else None
-        pages_seen = set()
-        for book in group:
-            pages_seen.update(book["pages_seen"])
-
-        pages_read = len(pages_seen)
+        intervals = merge_intervals([interval for book in group for interval in book["coverage_intervals"]])
         max_page = position_book["max_page"]
         total_pages = position_book["total_pages"]
+        pages_read = len(normalized_pages(intervals, total_pages))
         page_progress = None
         if total_pages and max_page:
             page_progress = min(100, round((max_page / total_pages) * 100))
@@ -735,18 +720,6 @@ def build_dashboard(
         for book in group:
             for day, seconds in book["day_seconds"].items():
                 book_day_seconds[day] += seconds
-        # Reading is assumed to progress from the beginning of the book across
-        # devices without overlapping.  The current position therefore gives
-        # the number of pages covered by the accumulated reading time.
-        pace_seconds_per_page = time_seconds / max_page if max_page else None
-        remaining_pages = max(total_pages - max_page, 0) if total_pages and max_page else None
-        estimated_remaining_seconds = None
-        if (
-            effective_book_status({"status": status, "progress": progress}) == "reading"
-            and pace_seconds_per_page is not None
-            and remaining_pages is not None
-        ):
-            estimated_remaining_seconds = round(remaining_pages * pace_seconds_per_page, 2)
         recent_activity = recent_book_activity(book_day_seconds, today=today)
         activity_devices: list[dict[str, str]] = []
         if snapshot and snapshot.device_id:
@@ -762,13 +735,14 @@ def build_dashboard(
             "last_open": last_open,
             "time_seconds": round(time_seconds, 2),
             "time_label": format_duration(time_seconds),
-            "pace_seconds_per_page": round(pace_seconds_per_page, 2) if pace_seconds_per_page is not None else None,
-            "estimated_remaining_seconds": estimated_remaining_seconds,
+            "pace_seconds_per_page": None,
+            "estimated_remaining_seconds": None,
             "pages": pages_read,
             "max_page": max_page,
             "total_pages": total_pages,
             "progress": progress,
             "percent_finished": percent_finished,
+            "position_fraction": float(percent_finished) if percent_finished is not None else position_book.get("position_fraction"),
             "status": status,
             "status_modified": sidecar.get("status_modified") if sidecar else None,
             "highlight_count": int(sidecar.get("highlight_count") or 0) if sidecar else 0,
@@ -785,18 +759,39 @@ def build_dashboard(
             "recent_activity_devices": activity_devices,
         }
         if include_all_sessions:
-            book_stat["_page_numbers"] = sorted(
-                {page for source_book in group for page in source_book["pages_seen"]}
-            )
+            book_stat["_coverage_intervals"] = intervals
+        if percent_finished is not None and total_pages:
+            book_stat["max_page"] = max(1, min(total_pages, round(float(percent_finished) * total_pages)))
         book_stats.append(book_stat)
 
-    sessions = build_sessions(session_events, merged_book_ids_by_source)
+    page_totals = {book["id"]: book["total_pages"] for book in book_stats}
+    sessions = build_sessions(session_events, merged_book_ids_by_source, page_totals)
     sessions_by_book: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for session in sessions:
-        for book_id in session["book_ids"]:
-            sessions_by_book[book_id].append(session)
+        for book_session in session["book_sessions"]:
+            sessions_by_book[book_session["book_ids"][0]].append(book_session)
     for book in book_stats:
-        book["recent_sessions"] = list(reversed(sessions_by_book.get(book["id"], [])))[:10]
+        history = sessions_by_book.get(book["id"], [])
+        book["recent_sessions"] = list(reversed(history))[:10]
+        estimate_book(book, history)
+
+    day_intervals: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
+    for event in session_events:
+        if event["interval"] is not None:
+            day_intervals[(event["started_at"].date().isoformat(), merged_book_ids_by_source[event["book_id"]])].append(event["interval"])
+    day_pages: dict[str, float] = defaultdict(float)
+    for (day, book_id), intervals in day_intervals.items():
+        if page_totals[book_id]:
+            day_pages[day] += coverage(intervals) * page_totals[book_id]
+    month_pages: dict[str, float] = defaultdict(float)
+    for day, pages in day_pages.items():
+        month_pages[day[:7]] += pages
+    for book in book_stats:
+        book["_day_coverage"] = {
+            day: coverage(intervals) for (day, book_id), intervals in day_intervals.items() if book_id == book["id"]
+        }
+        for activity in book["recent_activity"]:
+            activity["pages"] = round(coverage(day_intervals.get((activity["date"], book["id"]), [])) * (book["total_pages"] or 0), 2)
 
     book_stats = sorted(book_stats, key=lambda item: item["last_open"] or "", reverse=True)
     active_books = [book for book in book_stats if book["time_seconds"] > 0]
@@ -844,6 +839,7 @@ def build_dashboard(
                     "date": key,
                     "label": day_label(key),
                     "minutes": seconds_to_minutes(day_seconds.get(key, 0.0)),
+                    "pages": round(day_pages.get(key, 0), 2),
                 }
                 for key in latest_days
             ],
@@ -852,6 +848,7 @@ def build_dashboard(
                     "month": key,
                     "label": month_label(key),
                     "hours": seconds_to_hours(month_seconds.get(key, 0.0)),
+                    "pages": round(month_pages.get(key, 0), 2),
                 }
                 for key in latest_months
             ],
@@ -873,6 +870,7 @@ def build_dashboard(
                         "date": key,
                         "label": day_label(key, include_year=True),
                         "minutes": seconds_to_minutes(day_seconds[key]),
+                        "pages": round(day_pages.get(key, 0), 2),
                         "time_label": format_duration(day_seconds[key]),
                         "level": calendar_level(day_seconds[key], max_day_seconds),
                         "book_ids": sorted(
@@ -892,6 +890,9 @@ def build_dashboard(
     }
     if include_all_sessions:
         dashboard["_all_sessions"] = sessions
+    else:
+        for book in book_stats:
+            book.pop("_day_coverage", None)
     return dashboard
 
 
@@ -959,6 +960,8 @@ def aggregate_dashboards(
         }
 
     total_seconds = sum(float(dashboard["summary"]["total_time_seconds"]) for dashboard in dashboards)
+    day_pages: dict[str, float] = defaultdict(float)
+    month_pages: dict[str, float] = defaultdict(float)
     day_minutes: dict[str, float] = defaultdict(float)
     day_book_ids: dict[str, set[str]] = defaultdict(set)
     day_device_minutes: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
@@ -1031,34 +1034,16 @@ def aggregate_dashboards(
         status_book = max(evidence or group, key=lambda item: (item.get("status_modified") or item.get("last_open") or "", item.get("id") or ""))
         latest = max(group, key=lambda item: (item.get("last_open") or "", item.get("id") or ""))
         position_book = max(
-            group,
-            key=lambda item: (
-                (float(item.get("max_page")) / float(item.get("total_pages")))
-                if item.get("max_page") and item.get("total_pages")
-                else -1,
-                item.get("last_open") or "",
-                item.get("id") or "",
-            ),
+            (item for item in group if item.get("position_fraction") is not None),
+            key=lambda item: (item.get("last_open") or "", item.get("id") or ""), default=latest,
         )
         time_seconds = sum(float(item.get("time_seconds") or 0) for item in group)
-        has_page_numbers = any("_page_numbers" in item for item in group)
-        page_numbers = {page for item in group for page in item.get("_page_numbers", [])}
-        pages_seen = len(page_numbers) if has_page_numbers else sum(int(item.get("pages") or 0) for item in group)
         total_pages = position_book.get("total_pages")
-        current_page = position_book.get("max_page")
-        pace_seconds_per_page = time_seconds / int(current_page) if current_page else None
-        remaining_pages = (
-            max(int(total_pages) - int(current_page), 0)
-            if total_pages and current_page
-            else None
-        )
-        estimated_remaining_seconds = None
-        if (
-            effective_book_status(status_book) == "reading"
-            and pace_seconds_per_page is not None
-            and remaining_pages is not None
-        ):
-            estimated_remaining_seconds = round(remaining_pages * pace_seconds_per_page, 2)
+        position_fraction = (status_book.get("position_fraction") if status_book.get("percent_finished") is not None
+                             else position_book.get("position_fraction"))
+        current_page = max(1, min(total_pages, round(position_fraction * total_pages))) if total_pages and position_fraction is not None else None
+        intervals = [interval for item in group for interval in item.get("_coverage_intervals", [])]
+        pages_seen = len(normalized_pages(intervals, total_pages))
         source_book_ids = sorted(
             {
                 f"{item.get('_aggregate_device_id', 'unknown')}:{book_id}"
@@ -1078,6 +1063,12 @@ def aggregate_dashboards(
                 activity_device_seconds[activity_date][str(item["_aggregate_device_id"])] += seconds
         activity_end = datetime.strptime(max(activity_seconds), "%Y-%m-%d").date() if activity_seconds else None
         recent_activity = recent_book_activity(activity_seconds, today=activity_end)
+        book_day_pages: dict[str, float] = defaultdict(float)
+        for item in group:
+            for day, fraction in item.get("_day_coverage", {}).items():
+                book_day_pages[day] += fraction * (total_pages or 0)
+        for activity in recent_activity:
+            activity["pages"] = round(book_day_pages[activity["date"]], 2)
         activity_device_ids = sorted(
             {device_id for values in activity_device_seconds.values() for device_id, seconds in values.items() if seconds > 0},
             key=lambda device_id: device_labels[device_id],
@@ -1100,8 +1091,10 @@ def aggregate_dashboards(
             "source_book_ids": source_book_ids,
             "source_md5s": source_md5s,
             "merged_count": sum(int(item.get("merged_count") or 1) for item in group),
-            "pace_seconds_per_page": round(pace_seconds_per_page, 2) if pace_seconds_per_page is not None else None,
-            "estimated_remaining_seconds": estimated_remaining_seconds,
+            "pace_seconds_per_page": None,
+            "estimated_remaining_seconds": None,
+            "position_fraction": position_fraction,
+            "progress": (100 if effective_book_status(status_book) == "complete" else round(position_fraction * 100) if position_fraction is not None else None),
             "recent_sessions": [],
             "recent_activity": recent_activity,
             "recent_activity_devices": [
@@ -1109,18 +1102,27 @@ def aggregate_dashboards(
                 for device_id in activity_device_ids
             ],
         }
-        for key in ("_aggregate_device_id", "_page_numbers", "title_key", "authors_key", "series_key", "language_key"):
+        estimate_book(merged, [
+            {"coverage_percent": item.get("reading_coverage_percent", 0), "active_seconds": item.get("pace_time_seconds", 0)}
+            for item in group
+        ])
+        for key in ("_aggregate_device_id", "_coverage_intervals", "_day_coverage", "title_key", "authors_key", "series_key", "language_key"):
             merged.pop(key, None)
+        for day, pages in book_day_pages.items():
+            day_pages[day] += pages
         merged_books.append(merged)
         for item in group:
             aggregate_id_by_device_book_id[f"{item['_aggregate_device_id']}:{item['id']}"] = merged["id"]
 
+    for day, pages in day_pages.items():
+        month_pages[day[:7]] += pages
     merged_books = sorted(merged_books, key=lambda item: item.get("last_open") or "", reverse=True)
     merged_id_by_source: dict[str, str] = {}
     for book in merged_books:
         for source_book_id in book.get("source_book_ids", []):
             merged_id_by_source[str(source_book_id)] = book["id"]
 
+    aggregate_page_totals = {book["id"]: book["total_pages"] for book in merged_books}
     aggregate_sessions: list[dict[str, Any]] = []
     for device_id, device_label, session in device_sessions:
         book_ids = sorted(
@@ -1131,18 +1133,32 @@ def aggregate_dashboards(
             },
             key=book_id_sort_key,
         )
+        parts = []
+        for part in session.get("book_sessions", []):
+            mapped_id = aggregate_id_by_device_book_id.get(f"{device_id}:{part['book_ids'][0]}")
+            if mapped_id is None:
+                continue
+            total = aggregate_page_totals[mapped_id]
+            parts.append({
+                **part, "book_ids": [mapped_id], "device_id": device_id, "device_label": device_label,
+                "pages": round(part["coverage_percent"] * total / 100, 2)
+                    if part.get("coverage_percent") is not None and total else None,
+            })
         aggregate_sessions.append({
             **session,
             "book_ids": book_ids,
             "book_count": len(book_ids),
+            "book_sessions": parts,
+            "pages": round(sum(part["pages"] for part in parts), 2)
+                if parts and all(part["pages"] is not None for part in parts) else None,
             "device_id": device_id,
             "device_label": device_label,
         })
     aggregate_sessions.sort(key=lambda item: str(item.get("started_at") or ""), reverse=True)
     aggregate_sessions_by_book: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for session in aggregate_sessions:
-        for book_id in session["book_ids"]:
-            aggregate_sessions_by_book[book_id].append(session)
+        for part in session["book_sessions"]:
+            aggregate_sessions_by_book[part["book_ids"][0]].append(part)
     for book in merged_books:
         book["recent_sessions"] = aggregate_sessions_by_book.get(book["id"], [])[:10]
 
@@ -1209,6 +1225,7 @@ def aggregate_dashboards(
                     "date": key,
                     "label": day_label(key),
                     "minutes": seconds_to_minutes(day_seconds.get(key, 0.0)),
+                    "pages": round(day_pages.get(key, 0), 2),
                 }
                 for key in latest_days
             ],
@@ -1217,6 +1234,7 @@ def aggregate_dashboards(
                     "month": key,
                     "label": month_label(key),
                     "hours": month_hours.get(key, 0.0),
+                    "pages": round(month_pages.get(key, 0), 2),
                 }
                 for key in latest_months
             ],
@@ -1224,6 +1242,7 @@ def aggregate_dashboards(
                 {
                     "date": key,
                     "label": day_label(key),
+                    "pages": round(day_pages.get(key, 0), 2),
                     **{
                         device_id: round(day_device_minutes[key].get(device_id, 0.0), 2)
                         for device_id in sorted(device_labels)
@@ -1235,6 +1254,7 @@ def aggregate_dashboards(
                 {
                     "month": key,
                     "label": month_label(key),
+                    "pages": round(month_pages.get(key, 0), 2),
                     **{
                         device_id: round(month_device_hours[key].get(device_id, 0.0), 2)
                         for device_id in sorted(device_labels)
@@ -1264,6 +1284,7 @@ def aggregate_dashboards(
                         "date": key,
                         "label": day_label(key, include_year=True),
                         "minutes": seconds_to_minutes(day_seconds[key]),
+                        "pages": round(day_pages.get(key, 0), 2),
                         "time_label": format_duration(day_seconds[key]),
                         "level": calendar_level(day_seconds[key], max_day_seconds),
                         "book_ids": sorted(

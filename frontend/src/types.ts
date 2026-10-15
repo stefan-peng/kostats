@@ -133,6 +133,7 @@ export type BookStats = {
   time_seconds: number;
   time_label: string;
   pace_seconds_per_page: number | null;
+  pace_seconds_per_percent: number | null;
   estimated_remaining_seconds: number | null;
   pages: number;
   max_page: number | null;
@@ -162,6 +163,8 @@ export type ReadingSession = {
   active_seconds: number;
   elapsed_seconds: number;
   event_count: number;
+  coverage_percent: number | null;
+  pages: number | null;
   book_ids: string[];
   book_count: number;
   device_label?: string;
@@ -172,6 +175,7 @@ export type RecentActivity = {
   date: string;
   label: string;
   minutes: number;
+  pages: number;
   [deviceId: string]: string | number;
 };
 
@@ -201,8 +205,8 @@ export type Dashboard = {
     };
   };
   charts: {
-    daily: Array<{ date: string; label: string; minutes: number }>;
-    monthly: Array<{ month: string; label: string; hours: number }>;
+    daily: Array<{ date: string; label: string; minutes: number; pages: number }>;
+    monthly: Array<{ month: string; label: string; hours: number; pages: number }>;
     top_books: Array<{ id: string; title: string; hours: number }>;
     devices?: Array<{ id: string; label: string }>;
     daily_by_device?: Array<Record<string, string | number>>;
@@ -216,6 +220,7 @@ export type Dashboard = {
         date: string;
         label: string;
         minutes: number;
+        pages: number;
         time_label: string;
         level: 0 | 1 | 2 | 3 | 4;
         book_ids: string[];

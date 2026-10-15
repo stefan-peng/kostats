@@ -393,8 +393,8 @@ def test_sessions_and_book_pace_use_global_event_order(tmp_path: Path) -> None:
     assert sessions["recent"][1]["book_ids"] == ["1", "2"]
     assert sessions["recent"][1]["elapsed_seconds"] == 3720
     first_book = next(book for book in dashboard["books"] if book["id"] == "1")
-    assert first_book["pace_seconds_per_page"] == 256.36
-    assert first_book["estimated_remaining_seconds"] == 22816.36
+    assert first_book["pace_seconds_per_page"] == 940
+    assert first_book["estimated_remaining_seconds"] == 83660
     assert len(first_book["recent_sessions"]) == 2
 
 
@@ -408,23 +408,24 @@ def test_time_estimate_is_available_with_short_reading_history(tmp_path: Path) -
 
     first_book = next(book for book in dashboard["books"] if book["id"] == "1")
     assert first_book["time_seconds"] == 180
-    assert first_book["estimated_remaining_seconds"] == 1456.36
+    assert first_book["estimated_remaining_seconds"] == 5340
 
 
-def test_time_estimate_uses_current_page_for_pace(tmp_path: Path) -> None:
+def test_time_estimate_uses_recorded_coverage_and_latest_position(tmp_path: Path) -> None:
     db_path = tmp_path / "statistics.sqlite3"
     create_session_db(db_path)
     with sqlite3.connect(db_path) as conn:
         conn.execute("UPDATE page_stat_data SET page = 100, total_pages = 1000 WHERE id_book = 1 AND page = 10")
         conn.execute("UPDATE page_stat_data SET total_pages = 1000 WHERE id_book = 1")
+        conn.execute("UPDATE book SET pages = 1000 WHERE id = 1")
 
     dashboard = build_dashboard(db_path)
 
     first_book = next(book for book in dashboard["books"] if book["id"] == "1")
     assert first_book["pages"] == 3
-    assert first_book["max_page"] == 100
-    assert first_book["pace_seconds_per_page"] == 28.2
-    assert first_book["estimated_remaining_seconds"] == 25380
+    assert first_book["max_page"] == 11
+    assert first_book["pace_seconds_per_page"] == 940
+    assert first_book["estimated_remaining_seconds"] == 929660
 
 
 def test_aggregate_dashboard_keeps_device_sessions_visible(tmp_path: Path) -> None:
@@ -440,8 +441,8 @@ def test_aggregate_dashboard_keeps_device_sessions_visible(tmp_path: Path) -> No
     assert aggregate["insights"]["sessions"]["recent"][0]["device_label"] == "unknown"
     aggregate_book = next(book for book in aggregate["books"] if book["title"] == "Session One")
     assert aggregate_book["pages"] == 3
-    assert aggregate_book["pace_seconds_per_page"] == 512.73
-    assert aggregate_book["estimated_remaining_seconds"] == 45632.73
+    assert aggregate_book["pace_seconds_per_page"] == 940
+    assert aggregate_book["estimated_remaining_seconds"] == 83660
 
 
 def test_single_dashboard_aggregate_does_not_expose_internal_session_data(tmp_path: Path) -> None:
@@ -471,6 +472,8 @@ def test_aggregate_book_sessions_use_full_device_history(tmp_path: Path) -> None
     first_book["id"] = "merged:device-one"
     for session in first["_all_sessions"]:
         session["book_ids"] = ["merged:device-one" if book_id == "1" else book_id for book_id in session["book_ids"]]
+        for part in session["book_sessions"]:
+            part["book_ids"] = ["merged:device-one" if book_id == "1" else book_id for book_id in part["book_ids"]]
     expected_session = first["_all_sessions"][0]
     first["insights"]["sessions"]["recent"] = []
 
@@ -554,6 +557,7 @@ def test_calendar_keeps_all_reading_days_with_intensity(tmp_path: Path) -> None:
         "date": "2026-01-01",
         "label": "Jan 1, 2026",
         "minutes": 1,
+        "pages": 1,
         "time_label": "1m",
         "level": 1,
         "book_ids": ["1"],
@@ -570,20 +574,20 @@ def test_charts_include_gaps_for_missing_daily_and_monthly_reading(tmp_path: Pat
     dashboard = build_dashboard(db_path, today=date(2026, 5, 5))
 
     assert len(dashboard["charts"]["daily"]) == 30
-    assert dashboard["charts"]["daily"][0] == {"date": "2026-04-06", "label": "Apr 6", "minutes": 0.0}
+    assert dashboard["charts"]["daily"][0] == {"date": "2026-04-06", "label": "Apr 6", "minutes": 0.0, "pages": 0}
     assert dashboard["charts"]["daily"][-5:] == [
-        {"date": "2026-05-01", "label": "May 1", "minutes": 270.0},
-        {"date": "2026-05-02", "label": "May 2", "minutes": 0.0},
-        {"date": "2026-05-03", "label": "May 3", "minutes": 45.0},
-        {"date": "2026-05-04", "label": "May 4", "minutes": 0.0},
-        {"date": "2026-05-05", "label": "May 5", "minutes": 60.0},
+        {"date": "2026-05-01", "label": "May 1", "minutes": 270.0, "pages": 2},
+        {"date": "2026-05-02", "label": "May 2", "minutes": 0.0, "pages": 0},
+        {"date": "2026-05-03", "label": "May 3", "minutes": 45.0, "pages": 1},
+        {"date": "2026-05-04", "label": "May 4", "minutes": 0.0, "pages": 0},
+        {"date": "2026-05-05", "label": "May 5", "minutes": 60.0, "pages": 1},
     ]
     assert dashboard["charts"]["monthly"] == [
-        {"month": "2026-01", "label": "Jan 26", "hours": 2.0},
-        {"month": "2026-02", "label": "Feb 26", "hours": 0.0},
-        {"month": "2026-03", "label": "Mar 26", "hours": 3.0},
-        {"month": "2026-04", "label": "Apr 26", "hours": 0.0},
-        {"month": "2026-05", "label": "May 26", "hours": 6.25},
+        {"month": "2026-01", "label": "Jan 26", "hours": 2.0, "pages": 1},
+        {"month": "2026-02", "label": "Feb 26", "hours": 0.0, "pages": 0},
+        {"month": "2026-03", "label": "Mar 26", "hours": 3.0, "pages": 1},
+        {"month": "2026-04", "label": "Apr 26", "hours": 0.0, "pages": 0},
+        {"month": "2026-05", "label": "May 26", "hours": 6.25, "pages": 4},
     ]
 
 
@@ -595,8 +599,8 @@ def test_monthly_chart_stays_within_trailing_twelve_calendar_months(tmp_path: Pa
 
     monthly = dashboard["charts"]["monthly"]
     assert len(monthly) == 12
-    assert monthly[0] == {"month": "2025-01", "label": "Jan 25", "hours": 0.0}
-    assert monthly[-1] == {"month": "2025-12", "label": "Dec 25", "hours": 3.0}
+    assert monthly[0] == {"month": "2025-01", "label": "Jan 25", "hours": 0.0, "pages": 0}
+    assert monthly[-1] == {"month": "2025-12", "label": "Dec 25", "hours": 3.0, "pages": 1}
     assert all(point["month"] >= "2025-01" for point in monthly)
 
 
@@ -635,7 +639,7 @@ def test_duplicate_book_records_merge_conservatively(tmp_path: Path) -> None:
     assert dashboard["summary"]["books"] == 12
     assert len(dashboard["books"]) == 12
     assert len(dashboard["recent_books"]) == 12
-    assert dashboard["summary"]["pages"] == 16
+    assert dashboard["summary"]["pages"] == 18
     assert dashboard["charts"]["top_books"][0]["id"] == merged["id"]
     merged_calendar_days = [
         day
@@ -646,7 +650,7 @@ def test_duplicate_book_records_merge_conservatively(tmp_path: Path) -> None:
     assert merged["id"].startswith("merged:")
     assert merged["time_seconds"] == 1000
     assert merged["time_label"] == "17m"
-    assert merged["pages"] == 4
+    assert merged["pages"] == 6
     assert merged["max_page"] == 60
     assert merged["total_pages"] == 120
     assert merged["progress"] == 50
@@ -661,7 +665,7 @@ def test_duplicate_book_records_merge_conservatively(tmp_path: Path) -> None:
     assert unknown_author["merged_count"] == 2
 
 
-def test_merged_book_estimate_uses_furthest_progress_not_latest_reopen(tmp_path: Path) -> None:
+def test_merged_book_estimate_uses_reading_coverage_not_last_open_metadata(tmp_path: Path) -> None:
     db_path = tmp_path / "statistics.sqlite3"
     create_duplicate_books_db(db_path)
     with sqlite3.connect(db_path) as conn:
@@ -672,8 +676,8 @@ def test_merged_book_estimate_uses_furthest_progress_not_latest_reopen(tmp_path:
     merged = next(book for book in dashboard["books"] if book["title"] == "Merged Work")
     assert merged["max_page"] == 60
     assert merged["total_pages"] == 120
-    assert merged["pace_seconds_per_page"] == 16.67
-    assert merged["estimated_remaining_seconds"] == 1000
+    assert merged["pace_seconds_per_page"] == 227.27
+    assert merged["estimated_remaining_seconds"] == 13636.36
 
 
 def test_duplicate_book_false_positive_controls(tmp_path: Path) -> None:

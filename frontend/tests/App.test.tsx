@@ -118,8 +118,8 @@ const populatedDashboard = {
     highlights: 2,
   },
   charts: {
-    daily: [{ date: "2026-05-30", label: "May 30", minutes: 90 }],
-    monthly: [{ month: "2026-05", label: "May 26", hours: 1.5 }],
+    daily: [{ date: "2026-05-30", label: "May 30", minutes: 90, pages: 8 }],
+    monthly: [{ month: "2026-05", label: "May 26", hours: 1.5, pages: 8 }],
     top_books: [{ id: "1", title: "Piranesi", hours: 1.5 }],
     calendar: fullCalendar,
   },
@@ -136,6 +136,8 @@ const populatedDashboard = {
           active_seconds: 2700,
           elapsed_seconds: 3600,
           event_count: 8,
+          coverage_percent: 4,
+          pages: 8,
           book_ids: ["1"],
           book_count: 1,
         },
@@ -151,6 +153,7 @@ const populatedDashboard = {
       time_seconds: 5400,
       time_label: "1h 30m",
       pace_seconds_per_page: 675,
+      pace_seconds_per_percent: 1350,
       estimated_remaining_seconds: 81000,
       pages: 8,
       max_page: 80,
@@ -176,6 +179,8 @@ const populatedDashboard = {
           active_seconds: 2700,
           elapsed_seconds: 3600,
           event_count: 8,
+          coverage_percent: 4,
+          pages: 8,
           book_ids: ["1"],
           book_count: 1,
         },
@@ -958,10 +963,14 @@ describe("App", () => {
     expect(screen.getByRole("link", { name: /Overview/i })).toHaveAttribute("aria-current", "page");
     expect(screen.getByText("Days read")).toBeInTheDocument();
     expect(screen.getByText("Books in library")).toBeInTheDocument();
-    expect(screen.getByText("Pages read")).toBeInTheDocument();
+    expect(screen.getAllByText("Pages seen").length).toBeGreaterThan(0);
     expect(screen.queryByText("Currently reading")).not.toBeInTheDocument();
     expect(screen.queryByText("Recently read")).not.toBeInTheDocument();
     expect(screen.getByTestId("dashboard-primary-insights")).toHaveClass("min-w-0");
+    await selectRadixOption("Reading chart metric", "Pages");
+    expect(screen.getByRole("combobox", { name: "Reading chart metric" })).toHaveTextContent("Pages");
+    await selectRadixOption("Reading chart metric", "Time");
+    expect(screen.getByRole("combobox", { name: "Reading chart metric" })).toHaveTextContent("Time");
     expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "More reading insights" })).not.toBeInTheDocument();
     expect(screen.queryByText("Longer-term patterns and all-time leaders.")).not.toBeInTheDocument();
@@ -2478,9 +2487,15 @@ describe("App", () => {
     const dialogCover = within(dialog).getByRole("img", { name: "Cover of Piranesi" });
     expect(dialogCover).toHaveAttribute("loading", "eager");
     expect(within(dialog).getByText("~22h 30m left")).toBeInTheDocument();
-    expect(within(dialog).getByText("11 min/page")).toBeInTheDocument();
+    expect(within(dialog).getByText("22.5 min / 1%")).toBeInTheDocument();
     expect(within(dialog).getByText("Recent sessions")).toBeInTheDocument();
+    const sessions = within(dialog).getByRole("region", { name: "Book reading sessions" });
+    expect(within(sessions).getByRole("columnheader", { name: /Coverage/ })).toBeInTheDocument();
+    expect(within(sessions).getByText("4%")).toBeInTheDocument();
+    expect(within(sessions).getByRole("columnheader", { name: /Pages covered/ })).toBeInTheDocument();
     expect(within(dialog).getByText("45m")).toBeInTheDocument();
+    await selectRadixOption("Book activity metric", "Pages");
+    expect(within(dialog).getByRole("combobox", { name: "Book activity metric" })).toHaveTextContent("Pages");
 
     fireEvent.error(dialogCover);
     expect(within(dialog).getByRole("img", { name: "No cover available for Piranesi" })).toBeInTheDocument();

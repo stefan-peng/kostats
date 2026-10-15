@@ -84,3 +84,27 @@ book metadata to log messages. Raw Uvicorn access logs remain console-only.
 Diagnostic write failures produce a throttled stderr warning and do not fail
 application operations. Metrics cover backend requests, imports, backup/restore
 operations, and dashboard builds; frontend-only failures are not collected.
+
+## Reading coverage and estimates
+
+Session coverage measures the portion of a book represented by KOReader's recorded
+page visits. Skipped pages do not count. Visits are mapped to fractions of the book,
+so font and layout changes do not count the same text twice within a session.
+Repeated visits within that session share coverage; rereading in a later session
+contributes another pace sample. Sessions follow the existing 15-minute inactivity
+gap, with separate active time and coverage for each book in a sitting.
+
+Average pace is total active time from sessions with known coverage divided by their
+summed percentage points covered. Remaining time applies that pace to the unread
+fraction at the saved KOReader position, falling back to the latest recorded page.
+A jump forward does not supply reading coverage. Missing page information preserves
+recorded time but excludes that book-session from the pace estimate. KOReader has
+already filtered quick visits and capped long visits before saving these events;
+kostats does not apply a second guessed duration limit.
+
+Pages covered are fractional equivalents in the book's latest known pagination.
+Daily charts count distinct coverage per book and device on each day; monthly charts
+sum those daily values. Pages seen in the library count distinct normalized pages
+across the book's history. These counts can change after pagination changes and are
+not printed-edition page numbers. Coverage percentages are shown only for individual
+books, since percentages of different books cannot be added meaningfully.
