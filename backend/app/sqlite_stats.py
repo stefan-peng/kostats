@@ -1038,7 +1038,11 @@ def aggregate_dashboards(
             key=lambda item: (item.get("last_open") or "", item.get("id") or ""), default=latest,
         )
         time_seconds = sum(float(item.get("time_seconds") or 0) for item in group)
-        total_pages = position_book.get("total_pages")
+        pagination_book = max(
+            (item for item in group if item.get("total_pages")),
+            key=lambda item: (item.get("last_open") or "", item.get("id") or ""), default=position_book,
+        )
+        total_pages = pagination_book.get("total_pages")
         position_fraction = (status_book.get("position_fraction") if status_book.get("percent_finished") is not None
                              else position_book.get("position_fraction"))
         current_page = max(1, min(total_pages, round(position_fraction * total_pages))) if total_pages and position_fraction is not None else None

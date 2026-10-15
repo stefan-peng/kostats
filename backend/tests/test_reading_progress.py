@@ -137,3 +137,27 @@ def test_invalid_catalog_total_falls_back_to_valid_event_total(tmp_path):
     b = first_book(build_dashboard(path))
     assert b['total_pages'] == 100
     assert b['estimated_remaining_seconds'] == 5400
+
+
+def test_newer_metadata_only_position_keeps_another_devices_pagination(tmp_path):
+    path = tmp_path / 'read.sqlite3'
+    reading_db(path, [(1, 10, 0, 60, 100)])
+    first = SnapshotMeta('one', '2026-01-01', 'upload', None, str(path), 1, 0, '0', device_id='one')
+    read = build_dashboard(path, first, include_all_sessions=True)
+    metadata_path = tmp_path / 'metadata.sqlite3'
+    reading_db(metadata_path, [])
+    with closing(sqlite3.connect(metadata_path)) as conn:
+        conn.execute('UPDATE book SET last_open = last_open + 4000')
+        conn.commit()
+    sidecars = tmp_path / 'metadata.json'
+    sidecars.write_text(json.dumps({'records': [{'title': 'Book One', 'authors': 'Author',
+        'percent_finished': .4, 'status': 'reading'}]}))
+    second = SnapshotMeta('two', '2026-01-02', 'upload', None, str(metadata_path), 1, 0, '0',
+        device_id='two', sidecar_path=str(sidecars))
+    metadata = build_dashboard(metadata_path, second, include_all_sessions=True)
+    b = first_book(aggregate_dashboards([read, metadata], snapshots=[first, second]))
+    assert b['total_pages'] == 100
+    assert b['max_page'] == 40
+    assert b['pages'] == 1
+    assert b['estimated_remaining_seconds'] == 3600
+    assert b['recent_sessions'][0]['pages'] == 1
