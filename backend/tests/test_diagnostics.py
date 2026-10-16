@@ -1,6 +1,10 @@
 import json
 import logging
+import os
 import sqlite3
+import subprocess
+import sys
+from contextlib import closing
 
 import pytest
 from fastapi import FastAPI
@@ -77,6 +81,58 @@ def test_unavailable_diagnostics_do_not_break_operation(monkeypatch, tmp_path, c
     diagnostics.record('operation', 'test')
     diagnostics.record('operation', 'test')
     assert capsys.readouterr().err.count('diagnostics unavailable') == 1
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='SQLite file locks are process-scoped on POSIX')
+def test_record_preserves_locks_held_by_other_connections():
+    diagnostics.record('operation', 'seed')
+    path = diagnostics.database_path()
+    probe = '''
+import sqlite3
+import sys
+from contextlib import closing
+try:
+    with closing(sqlite3.connect(sys.argv[1], timeout=0)) as connection:
+        connection.execute('SELECT count(*) FROM events').fetchone()
+except sqlite3.Error as exc:
+    print(exc.sqlite_errorname)
+else:
+    print('unlocked')
+'''
+
+    def lock_status():
+        return subprocess.check_output([sys.executable, '-c', probe, str(path)], text=True).strip()
+
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('BEGIN EXCLUSIVE')
+        assert lock_status() == 'SQLITE_BUSY'
+        diagnostics.record('operation', 'concurrent')
+        assert lock_status() == 'SQLITE_BUSY'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX permissions')
+def test_database_is_created_privately():
+    diagnostics.record('operation', 'seed')
+    path = diagnostics.database_path()
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_database_warning_includes_sqlite_error_code_without_private_values(monkeypatch, capsys):
+    path = diagnostics.database_path()
+    path.parent.mkdir(parents=True)
+    path.write_text('private invalid database contents')
+    monkeypatch.setattr(diagnostics, '_last_warning', float('-inf'))
+
+    diagnostics.record('operation', 'test')
+    diagnostics.record('operation', 'test')
+
+    output = capsys.readouterr().err
+    assert output.count('diagnostics unavailable') == 1
+    assert 'DatabaseError (SQLITE_NOTADB)' in output
+    assert 'private' not in output
+    assert str(path) not in output
+    assert path.read_text() == 'private invalid database contents'
 
 
 def test_persistent_logs_and_exception_frames():

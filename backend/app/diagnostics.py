@@ -7,6 +7,7 @@ import math
 import os
 import sqlite3
 import sys
+import threading
 import time
 import uuid
 from contextlib import closing
@@ -21,6 +22,7 @@ from .config import data_dir
 MAX_RECORDS = 20_000
 RETENTION_SECONDS = 30 * 86400
 RUN_ID = uuid.uuid4().hex
+_creation_lock = threading.Lock()
 _last_warning = float('-inf')
 
 
@@ -34,9 +36,16 @@ def record(kind: str, name: str, **fields: object) -> None:
     try:
         path = database_path()
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        # Create privately before SQLite opens it (also safe across workers).
-        fd = os.open(path, os.O_CREAT | os.O_WRONLY, 0o600)
-        os.close(fd)
+        # Closing a non-SQLite descriptor for an existing database releases
+        # other connections' process-wide POSIX locks. Only open a new file,
+        # and serialize creation so no thread races the initial close.
+        with _creation_lock:
+            try:
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                os.close(fd)
         payload = json.dumps(fields, default=str, ensure_ascii=True)
         if len(payload) > 8192:
             payload = json.dumps({'truncated': True, 'original_bytes': len(payload)})
@@ -51,7 +60,9 @@ def record(kind: str, name: str, **fields: object) -> None:
         now = time.monotonic()
         if now - _last_warning >= 60:
             _last_warning = now
-            print(f'kostats diagnostics unavailable: {type(exc).__name__}', file=sys.stderr)
+            code = getattr(exc, 'sqlite_errorname', None)
+            detail = f' ({code})' if code else ''
+            print(f'kostats diagnostics unavailable: {type(exc).__name__}{detail}', file=sys.stderr)
 
 
 class PersistentHandler(logging.Handler):
