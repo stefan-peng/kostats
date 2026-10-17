@@ -22,7 +22,7 @@ from .config import data_dir
 MAX_RECORDS = 20_000
 RETENTION_SECONDS = 30 * 86400
 RUN_ID = uuid.uuid4().hex
-_creation_lock = threading.Lock()
+_write_lock = threading.Lock()
 _last_warning = float('-inf')
 
 
@@ -36,26 +36,30 @@ def record(kind: str, name: str, **fields: object) -> None:
     try:
         path = database_path()
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        # Closing a non-SQLite descriptor for an existing database releases
-        # other connections' process-wide POSIX locks. Only open a new file,
-        # and serialize creation so no thread races the initial close.
-        with _creation_lock:
+        payload = json.dumps(fields, default=str, ensure_ascii=True)
+        if len(payload) > 8192:
+            payload = json.dumps({'truncated': True, 'original_bytes': len(payload)})
+        # SQLite permits one writer. Queue this process's records before opening
+        # connections so its own threads do not exhaust the busy timeout.
+        with _write_lock:
+            # Closing a non-SQLite descriptor for an existing database releases
+            # other connections' process-wide POSIX locks. Only open a new file,
+            # and serialize creation so no thread races the initial close.
             try:
                 fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             except FileExistsError:
                 pass
             else:
                 os.close(fd)
-        payload = json.dumps(fields, default=str, ensure_ascii=True)
-        if len(payload) > 8192:
-            payload = json.dumps({'truncated': True, 'original_bytes': len(payload)})
-        with closing(sqlite3.connect(path, timeout=0.1)) as connection, connection:
-            connection.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, timestamp REAL NOT NULL, run_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, fields TEXT NOT NULL)')
-            connection.execute('CREATE INDEX IF NOT EXISTS events_timestamp ON events(timestamp)')
-            now = time.time()
-            connection.execute('INSERT INTO events(timestamp,run_id,kind,name,fields) VALUES (?,?,?,?,?)', (now, RUN_ID, kind, name, payload))
-            connection.execute('DELETE FROM events WHERE id <= (SELECT MAX(id) - ? FROM events)', (MAX_RECORDS,))
-            connection.execute('DELETE FROM events WHERE timestamp < ?', (now - RETENTION_SECONDS,))
+            with closing(sqlite3.connect(path, timeout=0.1)) as connection, connection:
+                # Agent summaries may read while the launcher and backend write.
+                connection.execute('PRAGMA journal_mode=WAL')
+                connection.execute('CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, timestamp REAL NOT NULL, run_id TEXT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, fields TEXT NOT NULL)')
+                connection.execute('CREATE INDEX IF NOT EXISTS events_timestamp ON events(timestamp)')
+                now = time.time()
+                connection.execute('INSERT INTO events(timestamp,run_id,kind,name,fields) VALUES (?,?,?,?,?)', (now, RUN_ID, kind, name, payload))
+                connection.execute('DELETE FROM events WHERE id <= (SELECT MAX(id) - ? FROM events)', (MAX_RECORDS,))
+                connection.execute('DELETE FROM events WHERE timestamp < ?', (now - RETENTION_SECONDS,))
     except (OSError, sqlite3.Error, ValueError) as exc:
         now = time.monotonic()
         if now - _last_warning >= 60:

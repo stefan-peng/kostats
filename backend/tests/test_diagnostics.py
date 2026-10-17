@@ -4,6 +4,9 @@ import os
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 
 import pytest
@@ -83,6 +86,54 @@ def test_unavailable_diagnostics_do_not_break_operation(monkeypatch, tmp_path, c
     assert capsys.readouterr().err.count('diagnostics unavailable') == 1
 
 
+def test_concurrent_records_are_not_lost(monkeypatch, capsys):
+    diagnostics.record('operation', 'seed')
+    connect = sqlite3.connect
+
+    class SlowWriter(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            result = super().execute(sql, parameters)
+            if sql.startswith('INSERT INTO events'):
+                # Keep a real write transaction open while other workers arrive.
+                time.sleep(0.01)
+            return result
+
+    monkeypatch.setattr(diagnostics.sqlite3, 'connect', lambda *args, **kwargs: connect(*args, factory=SlowWriter, **kwargs))
+    monkeypatch.setattr(diagnostics, '_last_warning', float('-inf'))
+    workers = 16
+    barrier = threading.Barrier(workers)
+
+    def write(worker):
+        barrier.wait(timeout=5)
+        for index in range(4):
+            diagnostics.record('operation', 'concurrent', worker=worker, index=index)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        list(executor.map(write, range(workers)))
+
+    events = [json.loads(fields) for _, name, fields in rows() if name == 'concurrent']
+    assert {(entry['worker'], entry['index']) for entry in events} == {
+        (worker, index) for worker in range(workers) for index in range(4)
+    }
+    assert len(events) == workers * 4
+    assert 'diagnostics unavailable' not in capsys.readouterr().err
+
+
+def test_reader_does_not_block_records(capsys):
+    diagnostics.record('operation', 'seed')
+    with closing(sqlite3.connect(diagnostics.database_path())) as reader:
+        reader.execute('BEGIN')
+        assert reader.execute('SELECT COUNT(*) FROM events').fetchone()[0] == 1
+
+        diagnostics.record('operation', 'while_reading')
+
+        # The existing reader keeps its snapshot while the write commits.
+        assert reader.execute('SELECT COUNT(*) FROM events').fetchone()[0] == 1
+        reader.commit()
+        assert reader.execute('SELECT COUNT(*) FROM events').fetchone()[0] == 2
+    assert 'diagnostics unavailable' not in capsys.readouterr().err
+
+
 @pytest.mark.skipif(os.name != 'posix', reason='SQLite file locks are process-scoped on POSIX')
 def test_record_preserves_locks_held_by_other_connections():
     diagnostics.record('operation', 'seed')
@@ -93,7 +144,7 @@ import sys
 from contextlib import closing
 try:
     with closing(sqlite3.connect(sys.argv[1], timeout=0)) as connection:
-        connection.execute('SELECT count(*) FROM events').fetchone()
+        connection.execute('BEGIN IMMEDIATE')
 except sqlite3.Error as exc:
     print(exc.sqlite_errorname)
 else:

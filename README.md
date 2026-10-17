@@ -82,7 +82,9 @@ and device labels. Persistent application logs retain their existing messages;
 exception frames exclude locals and exception values. Do not add credentials or
 book metadata to log messages. Raw Uvicorn access logs remain console-only.
 Diagnostic write failures produce a throttled stderr warning and do not fail
-application operations. Metrics cover backend requests, imports, backup/restore
+application operations. Writes are serialized within each process, and WAL mode
+allows agent readers to run alongside writes. External write locks still have a
+100 ms timeout. Metrics cover backend requests, imports, backup/restore
 operations, and dashboard builds; frontend-only failures are not collected.
 
 ## Reading coverage and estimates
