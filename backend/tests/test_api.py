@@ -65,7 +65,7 @@ def write_kobo_identity(volume: Path, *, model: str, device_id: str) -> None:
 
 def test_empty_dashboard_without_snapshot(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(tmp_path / "data"))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     response = client.get("/api/dashboard")
 
@@ -78,7 +78,7 @@ def test_upload_import_and_dashboard(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(tmp_path / "data"))
     source = tmp_path / "statistics.sqlite3"
     create_api_fixture(source)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     response = client.post(
         "/api/import/upload",
@@ -116,7 +116,7 @@ def test_upload_does_not_block_device_status(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr(SnapshotStore, "import_file", slow_import)
 
     async def check():
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as client:
             upload = asyncio.create_task(client.post(
                 "/api/import/upload",
                 files={"file": ("statistics.sqlite3", source.read_bytes(), "application/octet-stream")},
@@ -147,7 +147,7 @@ def test_dashboard_resolves_cover_and_endpoint_has_immutable_headers(monkeypatch
     save_cover_manifest(data_root, {"book-md5": asset_id})
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     main_module.cached_dashboard.cache_clear()
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     dashboard = client.get("/api/dashboard").json()
     response = client.get(dashboard["books"][0]["cover_url"])
@@ -182,7 +182,7 @@ def test_dashboard_endpoint_reuses_cached_snapshot_summary(monkeypatch, tmp_path
         return build_dashboard(*args, **kwargs)
 
     monkeypatch.setattr(main_module, "build_dashboard", counted_build_dashboard)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     first = client.get("/api/dashboard")
     second = client.get("/api/dashboard")
@@ -204,7 +204,7 @@ def test_dashboard_cache_misses_when_snapshot_file_changes(monkeypatch, tmp_path
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     main_module.cached_dashboard.cache_clear()
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     first = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
     Path(snapshot.path).unlink()
@@ -229,7 +229,7 @@ def test_dashboard_cache_does_not_hide_deleted_snapshot_file(monkeypatch, tmp_pa
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     main_module.cached_dashboard.cache_clear()
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     first = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
     Path(snapshot.path).unlink()
@@ -254,7 +254,7 @@ def test_dashboard_cache_misses_when_current_local_date_changes(monkeypatch, tmp
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     main_module.cached_dashboard.cache_clear()
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     monkeypatch.setattr(main_module, "current_local_date", lambda: "2026-06-04")
     first = client.get("/api/dashboard", params={"snapshot_id": snapshot.id})
@@ -271,7 +271,7 @@ def test_upload_requires_device_assignment(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(tmp_path / "data"))
     source = tmp_path / "statistics.sqlite3"
     create_api_fixture(source)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     response = client.post(
         "/api/import/upload",
@@ -287,7 +287,7 @@ def test_upload_can_create_named_device(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(tmp_path / "data"))
     source = tmp_path / "statistics.sqlite3"
     create_api_fixture(source)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     response = client.post(
         "/api/import/upload",
@@ -304,7 +304,7 @@ def test_new_device_label_matching_existing_device_reuses_it(monkeypatch, tmp_pa
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(tmp_path / "data"))
     source = tmp_path / "statistics.sqlite3"
     create_api_fixture(source)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     first = client.post(
         "/api/import/upload",
         files={"file": ("first.sqlite3", source.read_bytes(), "application/octet-stream")},
@@ -328,7 +328,7 @@ def test_new_device_label_matching_synthetic_device_reuses_it(monkeypatch, tmp_p
     create_api_fixture(source)
     SnapshotStore(data_root).import_file(source, source_kind="kobo", source_path="legacy.sqlite3")
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     response = client.post(
         "/api/import/upload",
@@ -345,7 +345,7 @@ def test_upload_rejects_unsupported_sqlite_without_snapshot(monkeypatch, tmp_pat
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(tmp_path / "data"))
     source = tmp_path / "not-koreader.sqlite3"
     sqlite3.connect(source).execute("CREATE TABLE nope (id INTEGER)").connection.close()
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     response = client.post(
         "/api/import/upload",
@@ -367,7 +367,7 @@ def test_auto_kobo_import_endpoint_skips_unchanged_database(monkeypatch, tmp_pat
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     monkeypatch.setenv("KOSTATS_KOBO_VOLUME", str(volume))
     DeviceRegistry(data_root).ensure_for_volume(volume)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     dashboard_builds = []
 
@@ -406,7 +406,7 @@ def test_devices_and_dashboard_can_filter_multiple_kobos(monkeypatch, tmp_path: 
 
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     monkeypatch.setenv("KOSTATS_KOBO_VOLUME", str(first_volume))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     first = client.post("/api/import/kobo")
     assert first.status_code == 200
@@ -460,7 +460,7 @@ def test_aggregate_books_merge_different_md5_versions_by_identity(monkeypatch, t
         device={"id": "device-b", "label": "Kobo B", "model": None},
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     dashboard = client.get("/api/dashboard").json()
 
@@ -497,7 +497,7 @@ def test_aggregate_device_charts_merge_duplicate_labels(monkeypatch, tmp_path: P
         device={"id": "device-b", "label": " travel   kobo ", "model": None},
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     dashboard = client.get("/api/dashboard").json()
 
@@ -515,7 +515,7 @@ def test_aggregate_device_charts_merge_historical_ids_by_manual_label(monkeypatc
     SnapshotStore(data_root).import_file(first_source, source_kind="kobo", source_path="first.sqlite3")
     SnapshotStore(data_root).import_file(second_source, source_kind="upload", source_path="second.sqlite3")
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     dashboard = client.get("/api/dashboard").json()
 
@@ -560,7 +560,7 @@ def test_devices_filter_merges_manual_label_and_keeps_tablet_separate(monkeypatc
         device={"id": "tablet", "label": "Tablet", "model": None},
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     devices = client.get("/api/devices").json()["devices"]
     assert [(device["label"], device["snapshot_count"]) for device in devices] == [
@@ -616,7 +616,7 @@ def test_auto_detected_same_label_devices_merge_to_latest_snapshot(monkeypatch, 
         device={"id": "tablet", "label": "Tablet", "model": None},
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     devices = client.get("/api/devices").json()["devices"]
     assert [(device["label"], device["snapshot_count"]) for device in devices] == [
@@ -652,7 +652,7 @@ def test_generic_auto_detected_labels_do_not_merge(monkeypatch, tmp_path: Path) 
         device={"id": "kobo-b", "label": "Kobo device", "model": None},
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     devices = client.get("/api/devices").json()["devices"]
     assert [(device["id"], device["label"], device["snapshot_count"]) for device in devices] == [
@@ -701,7 +701,7 @@ def test_dashboard_charts_merge_legacy_kobo_rows_with_manual_label(monkeypatch, 
         label_source="manual",
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     dashboard = client.get("/api/dashboard").json()
 
@@ -720,7 +720,7 @@ def test_legacy_synthetic_device_can_be_renamed(monkeypatch, tmp_path: Path) -> 
     create_api_fixture(source)
     SnapshotStore(data_root).import_file(source, source_kind="kobo", source_path="legacy.sqlite3")
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     assert client.get("/api/devices").json()["devices"][0]["label"] == "Primary Kobo"
     renamed = client.patch("/api/devices/primary-kobo", json={"label": "Travel Kobo"})
@@ -736,7 +736,7 @@ def test_snapshot_device_can_be_reassigned(monkeypatch, tmp_path: Path) -> None:
     create_api_fixture(source)
     snapshot = SnapshotStore(data_root).import_file(source, source_kind="upload", source_path="source.sqlite3")
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     created = client.post("/api/import/upload", files={"file": ("copy.sqlite3", source.read_bytes(), "application/octet-stream")}, data={"new_device_label": "Desk Kobo"})
     device_id = created.json()["snapshot"]["device_id"]
 
@@ -776,7 +776,7 @@ def test_recovery_backup_preview_and_restore_endpoints(monkeypatch, tmp_path: Pa
     )
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     monkeypatch.setenv("KOSTATS_KOBO_VOLUME", str(volume))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
 
     created = client.post("/api/backups/kobo")
     assert created.status_code == 200
@@ -823,7 +823,7 @@ def test_restore_preview_warns_when_backup_device_differs(monkeypatch, tmp_path:
 
     monkeypatch.setenv("KOSTATS_DATA_DIR", str(data_root))
     monkeypatch.setenv("KOSTATS_KOBO_VOLUME", str(source_volume))
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1")
     created = client.post("/api/backups/kobo")
     assert created.status_code == 200
     backup_id = created.json()["backup"]["id"]

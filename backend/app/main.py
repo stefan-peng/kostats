@@ -20,6 +20,7 @@ from .errors import BackupError, ImportError, UnsupportedSchemaError
 from .file_cache import file_fingerprint
 from .sqlite_stats import SnapshotMeta, aggregate_dashboards, build_dashboard, empty_dashboard
 from .storage import SnapshotStore, hash_file
+from .request_security import LocalRequestSecurity, MAX_UPLOAD_BYTES
 
 
 app = FastAPI(title="kostats", version="0.1.0")
@@ -34,6 +35,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(LocalRequestSecurity, frontend_origins=frontend_origins)
 
 
 def store() -> SnapshotStore:
@@ -364,9 +366,15 @@ def post_import_upload(
     suffix = Path(file.filename or "statistics.sqlite3").suffix or ".sqlite3"
     tmp_path = None
     try:
+        if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Database upload is too large.")
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
             tmp_path = Path(handle.name)
+            copied = 0
             while chunk := file.file.read(1024 * 1024):
+                copied += len(chunk)
+                if copied > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="Database upload is too large.")
                 handle.write(chunk)
 
         assignment = DeviceAssignmentRequest(device_id=device_id, new_device_label=new_device_label)

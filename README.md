@@ -58,6 +58,14 @@ For a serving-only deployment, copy `frontend/dist/` from the build machine and 
 not needed on the serving machine. Set `KOSTATS_FRONTEND_DIR` to serve assets from a
 different directory. Frontend builds must include npm dev dependencies.
 
+Keep the server on loopback. Requests must use `localhost`, `127.0.0.1`, or
+`[::1]`; browser writes require the server's own origin or an allowed frontend
+origin. Development allows ports at `http://localhost:5173` and
+`http://127.0.0.1:5173`; set `KOSTATS_FRONTEND_ORIGIN` when using another frontend
+port. Database uploads are limited to 512 MiB, with 1 MiB of multipart overhead;
+other request bodies are limited to 64 KiB. Limits apply while receiving data,
+including requests without a Content-Length header.
+
 The app works when the Kobo is not connected. On startup and while open, it checks a mounted Kobo every 15 seconds and imports a new local snapshot when the KOReader database or normalized book metadata has changed; it also refreshes changed EPUB cover art without creating an otherwise identical snapshot. The device status shows whether the connected Kobo matches the latest imported snapshot, and the app continues showing the latest local snapshot if no device is present. macOS uses `/Volumes/KOBOeReader`; Linux checks active mounts under `/media`, `/run/media`, and `/mnt`; Windows scans mounted drive letters such as `E:\` for a Kobo volume or KOReader statistics database.
 
 Set `KOSTATS_KOBO_VOLUME` to override auto-detection, for example `KOSTATS_KOBO_VOLUME=E:\` on Windows, `KOSTATS_KOBO_VOLUME=/Volumes/KOBOeReader` on macOS, or `KOSTATS_KOBO_VOLUME=/media/$USER/KOBOeReader` on Linux.
