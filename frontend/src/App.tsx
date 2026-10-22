@@ -1,4 +1,4 @@
-import { QueryClientProvider, useMutation } from "@tanstack/react-query";
+import { isCancelledError, QueryClientProvider, useMutation } from "@tanstack/react-query";
 import { createQueryClient, useServerData } from "./queries";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -2923,12 +2923,14 @@ function AppContent() {
 
   function publishDashboard(nextDashboard: Dashboard, snapshot = snapshotSelection, deviceId = deviceFilter) {
     hasUsableDashboard.current = nextDashboard.has_data;
+    void client.cancelQueries({ queryKey: ["dashboard-data", deviceId, snapshot], exact: true });
     setDashboard(nextDashboard, snapshot, deviceId);
     setCriticalError(null);
     setRefreshError(null);
   }
 
   function reportRefreshError(err: unknown) {
+    if (isCancelledError(err)) return;
     const details = err instanceof Error ? err.message : undefined;
     if (hasUsableDashboard.current) {
       setRefreshError({ message: "The dashboard could not be refreshed. The data already on screen is still available.", details });
@@ -3015,6 +3017,7 @@ function AppContent() {
       }
       if (refreshId !== dashboardRefreshId.current) return;
       const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
+      await client.cancelQueries({ queryKey: ["dashboard-data"] });
       const next = await fetchData(deviceFilter, dashboardSnapshotId);
       const { dashboard: dashboardData } = next;
       const snapshotData = { snapshots: next.snapshots };
@@ -3153,6 +3156,7 @@ function AppContent() {
     setBusyAction("backup");
     try {
       const created = await backup.mutateAsync();
+      await client.cancelQueries({ queryKey: ["dashboard-data"] });
       setBackups((current) => [
         created.backup,
         ...current.filter((backup) => backup.id !== created.backup.id),
@@ -3175,6 +3179,7 @@ function AppContent() {
     setBusyAction("restore");
     try {
       const result = await restore.mutateAsync({ id: backupId, extensions });
+      await client.cancelQueries({ queryKey: ["dashboard-data"] });
       getBackups(deviceFilter)
         .then((backupData) => setBackups(backupData.backups))
         .catch(() => undefined);
@@ -3198,6 +3203,7 @@ function AppContent() {
     clearActionError("rename");
     try {
       await rename.mutateAsync({ id: deviceId, label: label.trim() });
+      await client.cancelQueries({ queryKey: ["dashboard-data"] });
       const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
       await fetchData(deviceFilter, dashboardSnapshotId);
       toast.success("Device label saved");
@@ -3211,6 +3217,7 @@ function AppContent() {
     clearActionError("snapshot");
     try {
       const result = await reassign.mutateAsync({ id: snapshotId, deviceId: targetDeviceId });
+      await client.cancelQueries({ queryKey: ["dashboard-data"] });
       setSnapshots((current) => current.map((snapshot) => (snapshot.id === snapshotId ? result.snapshot : snapshot)));
       if (dashboard.snapshot?.id === snapshotId) {
         const nextDevice = result.snapshot.device_id ?? "all";

@@ -747,6 +747,49 @@ describe("App", () => {
     expect(snapshotTable.getByLabelText(`Device for ${olderSnapshot.id}`)).toHaveTextContent("Travel Kobo");
   });
 
+  it("keeps the last successful dashboard when a new device read fails", async () => {
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return { mounted: false, database_found: false, candidates: [] };
+      if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
+      if (url.startsWith("/api/dashboard") && url.includes("device_id=travel-kobo")) return new Error("Travel device unavailable");
+      return populatedDashboard;
+    });
+    render(<App />);
+    await screen.findByText("Recent books");
+    await selectRadixOption("Device filter", "Travel Kobo");
+    expect(await screen.findByText("Showing existing data")).toBeInTheDocument();
+    expect(screen.getAllByText("Piranesi").length).toBeGreaterThan(0);
+    expect(screen.queryByText("No database yet")).not.toBeInTheDocument();
+  });
+
+  it("does not let a pre-import read replace the newly imported snapshot", async () => {
+    let resolveOld!: (value: unknown) => void;
+    const delayed = new Promise((resolve) => { resolveOld = resolve; });
+    let reads = 0;
+    let imported = false;
+    const status = { mounted: true, database_found: true, permission_error: null, candidates: [] };
+    mockFetch((url) => {
+      if (url.startsWith("/api/device/status")) return status;
+      if (url.startsWith("/api/import/kobo/auto")) return { imported: false, reason: "unchanged", snapshot: imported ? autoSnapshot : populatedDashboard.snapshot, device: status };
+      if (url === "/api/import/kobo") { imported = true; return { snapshot: autoSnapshot, dashboard: autoDashboard }; }
+      if (url.startsWith("/api/snapshots")) return { snapshots: [imported ? autoSnapshot : populatedDashboard.snapshot] };
+      if (url.startsWith("/api/dashboard")) { reads += 1; return reads === 2 ? delayed : imported ? autoDashboard : populatedDashboard; }
+      return populatedDashboard;
+    });
+    render(<App />);
+    await screen.findByText("Recent books");
+    await userEvent.click(screen.getByRole("link", { name: "Import / Export" }));
+    await userEvent.click(screen.getByRole("button", { name: /Refresh now/i }));
+    await waitFor(() => expect(reads).toBe(2));
+    await userEvent.click(screen.getByRole("button", { name: "Import from Kobo" }));
+    await screen.findByText("Imported from Kobo");
+    await act(async () => { resolveOld(populatedDashboard); });
+    const banner = within(screen.getByLabelText("Device import status"));
+    expect(banner.getByText(/Jun 1, 2026/)).toBeInTheDocument();
+    expect(banner.queryByText(/May 31, 2026/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Showing existing data")).not.toBeInTheDocument();
+  });
+
   it("keeps the selected device after manually uploading a snapshot", async () => {
     mockFetch((url) => {
       if (url.startsWith("/api/device/status")) {

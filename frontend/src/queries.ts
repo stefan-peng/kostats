@@ -1,5 +1,5 @@
 import { keepPreviousData, QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Dispatch, SetStateAction } from "react";
+import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { getBackups, getDashboard, getDevices, getDeviceStatus, getSnapshots } from "./api";
 import type { Dashboard, DeviceSummary, RecoveryBackup, Snapshot } from "./types";
 
@@ -38,7 +38,9 @@ export function useServerData(deviceId: string, snapshotId: string, emptyDashboa
   // completes, so an older response cannot overwrite a newly imported snapshot.
   const query = useQuery({ ...options, enabled: false, placeholderData: keepPreviousData });
   const status = useQuery({ ...deviceQuery, enabled: false });
-  const data = query.data ?? { devices: [], dashboard: emptyDashboard, snapshots: [], backups: [] };
+  const lastSuccessful = useRef<ServerData | null>(null);
+  useEffect(() => { if (query.data) lastSuccessful.current = query.data; }, [query.data]);
+  const data = query.data ?? lastSuccessful.current ?? { devices: [], dashboard: emptyDashboard, snapshots: [], backups: [] };
   function setter<K extends keyof ServerData>(field: K): Dispatch<SetStateAction<ServerData[K]>> {
     return (update) => client.setQueryData(options.queryKey, (previous: ServerData | undefined) => {
       const current = previous ?? data;
