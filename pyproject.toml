@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 dev = "backend.app.dev:main"
+build-frontend = "backend.app.build:main"
 prod = "backend.app.prod:main"
 
 [build-system]
