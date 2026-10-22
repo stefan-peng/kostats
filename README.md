@@ -38,6 +38,9 @@ Use `--frontend-port` or `--backend-port` when the default ports are occupied.
 Open `http://127.0.0.1:5173`.
 
 The development command runs the Vite frontend and reload-enabled FastAPI backend together.
+The project pins Python 3.13.17 in `.python-version`; `uv sync` selects that patched
+runtime. Keep the pin current with Python security releases, since dependency
+audits do not check the Python interpreter or its bundled Expat library.
 Logs use Rich formatting when attached to a terminal. Set `KOSTATS_LOG_LEVEL` to a standard
 Python logging level such as `DEBUG` or `WARNING` to adjust verbosity.
 
