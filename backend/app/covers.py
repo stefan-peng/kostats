@@ -9,15 +9,14 @@ import zipfile
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 from xml.etree import ElementTree
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from .epub import bounded_zip_member, member_path, package_document
 
 MAX_COVER_DIMENSION = 1600
-MAX_CONTAINER_BYTES = 1024 * 1024
-MAX_OPF_BYTES = 4 * 1024 * 1024
 MAX_COVER_BYTES = 50 * 1024 * 1024
 MANIFEST_VERSION = 2
 
@@ -103,39 +102,10 @@ def xml_attr(element: ElementTree.Element, name: str) -> str | None:
     return value.strip() if value and value.strip() else None
 
 
-def bounded_zip_member(archive: zipfile.ZipFile, name: str, maximum_bytes: int) -> bytes | None:
-    try:
-        info = archive.getinfo(name)
-    except KeyError:
-        return None
-    if info.flag_bits & 0x1 or info.file_size < 0 or info.file_size > maximum_bytes:
-        return None
-    try:
-        with archive.open(info, "r") as member:
-            payload = member.read(maximum_bytes + 1)
-    except (OSError, RuntimeError, zipfile.BadZipFile):
-        return None
-    if len(payload) > maximum_bytes or len(payload) != info.file_size:
-        return None
-    return payload
-
-
 def epub_cover_bytes(epub_path: Path) -> bytes | None:
     try:
         with zipfile.ZipFile(epub_path) as archive:
-            container_payload = bounded_zip_member(archive, "META-INF/container.xml", MAX_CONTAINER_BYTES)
-            if container_payload is None:
-                return None
-            container = ElementTree.fromstring(container_payload)
-            rootfile = next((item for item in container.iter() if item.tag.rsplit("}", 1)[-1] == "rootfile"), None)
-            opf_name = xml_attr(rootfile, "full-path") if rootfile is not None else None
-            if not opf_name:
-                return None
-            opf_name = unquote(opf_name)
-            opf_payload = bounded_zip_member(archive, opf_name, MAX_OPF_BYTES)
-            if opf_payload is None:
-                return None
-            opf = ElementTree.fromstring(opf_payload)
+            opf_name, opf = package_document(archive)
             manifest_items = {
                 xml_attr(item, "id"): item
                 for item in opf.iter()
@@ -159,10 +129,7 @@ def epub_cover_bytes(epub_path: Path) -> bytes | None:
             href = xml_attr(cover_item, "href") if cover_item is not None else None
             if not href:
                 return None
-            href_path = unquote(urlsplit(href).path)
-            if not href_path:
-                return None
-            cover_name = str(PurePosixPath(opf_name).parent / PurePosixPath(href_path))
+            cover_name = member_path(href, opf_name)
             return bounded_zip_member(archive, cover_name, MAX_COVER_BYTES)
     except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError):
         return None

@@ -8,6 +8,13 @@ Device snapshots also inventory supported book files outside hidden/system direc
 
 EPUB titles and authors come from embedded metadata; other formats use filenames when no KOReader metadata exists. Inventory changes trigger a new snapshot. Reading time, sessions, calendar activity, and recent/top books remain based on recorded activity. Existing snapshots and database-only uploads cannot discover never-opened files; connect and import the device to populate unread books.
 
+EPUB metadata reads reject DTDs/entities and archive paths that escape the ZIP.
+Container XML is limited to 1 MiB and package XML to 4 MiB, with at most 64 levels
+and 50,000 elements. Lua sidecars are read as data only: quoted strings, decimal
+numbers, booleans, nil, tables, and line comments. Source files are limited to
+8 MiB, 250,000 tokens, and 64 nested tables. Invalid metadata is ignored for the
+affected book.
+
 Recovery backups use format v2 by default. They preserve KOReader settings, statistics, vocabulary, dictionaries, sidecars, and optional extensions without copying EPUB, PDF, or other book payloads. Format v2 stores dictionary payloads in the local content-addressed store alongside the ZIP archives, so the `data/` directory must stay together. Existing format v1 backups, which store dictionaries inside each ZIP, remain restorable. Restoring a recovery backup modifies the mounted Kobo only after an explicit preview and confirmation, and first creates a safety backup of the device's current state.
 
 The theme defaults to **Auto**, following the browser's reported light/dark preference, including changes while the page is open. Choose **Auto**, **Light**, or **Dark** in **Settings → Appearance**; the choice is saved in that browser. Firefox's website appearance setting can override the desktop theme.

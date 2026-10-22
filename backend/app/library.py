@@ -7,8 +7,8 @@ import os
 import zipfile
 from functools import lru_cache
 from pathlib import Path
-from xml.etree import ElementTree
 
+from .epub import package_document
 from .file_cache import file_fingerprint
 
 BOOK_EXTENSIONS = {
@@ -41,20 +41,14 @@ def epub_metadata(path: Path) -> dict:
         return {}
     try:
         return dict(cached_epub_metadata(path.absolute(), file_fingerprint(path)))
-    except (OSError, ValueError, KeyError, StopIteration, zipfile.BadZipFile, ElementTree.ParseError):
+    except (OSError, ValueError, zipfile.BadZipFile):
         return {}
 
 
 @lru_cache(maxsize=2048)
 def cached_epub_metadata(path: Path, fingerprint: tuple) -> dict:
     with zipfile.ZipFile(path) as archive:
-        def xml(name: str) -> ElementTree.Element:
-            if archive.getinfo(name).file_size > 2 * 1024 * 1024:
-                raise ValueError('Metadata too large')
-            return ElementTree.fromstring(archive.read(name))
-        container = xml('META-INF/container.xml')
-        rootfile = next(node for node in container.iter() if node.tag.split('}')[-1] == 'rootfile')
-        package = xml(rootfile.attrib['full-path'])
+        _, package = package_document(archive)
         ns = '{http://purl.org/dc/elements/1.1/}'
         def values(name: str) -> list[str]:
             return [

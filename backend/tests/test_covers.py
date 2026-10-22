@@ -8,9 +8,7 @@ import pytest
 from PIL import Image
 
 from backend.app.covers import (
-    MAX_CONTAINER_BYTES,
     MAX_COVER_DIMENSION,
-    bounded_zip_member,
     cover_url_for_md5s,
     covers_dir,
     epub_cover_bytes,
@@ -20,6 +18,7 @@ from backend.app.covers import (
     populate_cover_cache,
     save_cover_manifest,
 )
+from backend.app.epub import MAX_CONTAINER_BYTES, bounded_zip_member
 
 
 def image_bytes(*, size: tuple[int, int] = (40, 60), format: str = "PNG") -> bytes:

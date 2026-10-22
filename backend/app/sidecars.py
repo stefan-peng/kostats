@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any
 
 from .library import inventory
 from .file_cache import file_fingerprint
-from .lua_table import LuaTableError, parse_lua_table
+from .lua_table import LuaTableError, parse_lua_table, read_lua_source
 
 
 VALID_STATUSES = {"reading", "complete", "abandoned"}
@@ -25,14 +26,14 @@ def text_value(value: Any) -> str | None:
 def int_value(value: Any) -> int | None:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
 def float_value(value: Any) -> float | None:
     try:
         result = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return result if 0 <= result <= 1 else None
 
@@ -67,7 +68,7 @@ def normalize_sidecar(path: Path) -> dict[str, Any] | None:
 
 @lru_cache(maxsize=2048)
 def cached_sidecar(path: Path, fingerprint: tuple) -> dict[str, Any] | None:
-    parsed = parse_lua_table(path.read_text(encoding="utf-8"))
+    parsed = parse_lua_table(read_lua_source(path))
     if not isinstance(parsed, dict):
         return None
 
@@ -100,8 +101,9 @@ def cached_sidecar(path: Path, fingerprint: tuple) -> dict[str, Any] | None:
 
 def float_value_unbounded(value: Any) -> float | None:
     try:
-        return float(value)
-    except (TypeError, ValueError):
+        result = float(value)
+        return result if math.isfinite(result) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
