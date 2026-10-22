@@ -216,7 +216,7 @@ function BookCover({
           className="size-full object-cover"
           decoding="async"
           loading={eager ? "eager" : "lazy"}
-          onError={() => setFailedUrl(book.cover_url)}
+        onError={() => setFailedUrl(book.cover_url ?? null)}
           src={book.cover_url ?? undefined}
         />
       ) : (

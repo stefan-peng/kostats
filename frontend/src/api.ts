@@ -2,6 +2,7 @@ import type {
   AutoImportResult,
   Dashboard,
   DeviceAssignment,
+  DeviceRecord,
   DeviceSummary,
   DeviceStatus,
   RecoveryBackup,
@@ -27,8 +28,8 @@ export function getDevices(): Promise<{ devices: DeviceSummary[] }> {
   return request<{ devices: DeviceSummary[] }>("/api/devices");
 }
 
-export function renameDevice(deviceId: string, label: string): Promise<{ device: DeviceSummary }> {
-  return request<{ device: DeviceSummary }>(`/api/devices/${encodeURIComponent(deviceId)}`, {
+export function renameDevice(deviceId: string, label: string): Promise<{ device: DeviceRecord }> {
+  return request<{ device: DeviceRecord }>(`/api/devices/${encodeURIComponent(deviceId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ label }),

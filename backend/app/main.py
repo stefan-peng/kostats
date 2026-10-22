@@ -20,6 +20,7 @@ from .errors import BackupError, ImportError, UnsupportedSchemaError
 from .file_cache import file_fingerprint
 from .sqlite_stats import SnapshotMeta, aggregate_dashboards, build_dashboard, empty_dashboard
 from .storage import SnapshotStore, hash_file
+from . import schemas
 from .request_security import LocalRequestSecurity, MAX_UPLOAD_BYTES
 
 
@@ -289,12 +290,12 @@ def latest_effective_snapshots(snapshot_rows: list[dict], backup_rows: list[dict
     return [SnapshotMeta(**with_effective_device(row, group_by_raw_id)) for row in latest.values()]
 
 
-@app.get("/api/device/status")
+@app.get("/api/device/status", response_model=schemas.DeviceStatus, response_model_exclude_unset=True)
 def get_device_status() -> dict:
     return device_status()
 
 
-@app.get("/api/devices")
+@app.get("/api/devices", response_model=schemas.DevicesResponse, response_model_exclude_unset=True)
 def get_devices() -> dict:
     snapshot_rows = store().list_snapshots()
     backup_rows = backup_store().list_backups()
@@ -302,7 +303,7 @@ def get_devices() -> dict:
     return {"devices": summaries}
 
 
-@app.patch("/api/devices/{device_id}")
+@app.patch("/api/devices/{device_id}", response_model=schemas.DeviceResponse, response_model_exclude_unset=True)
 def patch_device(device_id: str, request: DeviceUpdateRequest) -> dict:
     registry = device_registry()
     snapshot_rows = store().list_snapshots()
@@ -333,7 +334,7 @@ def patch_device(device_id: str, request: DeviceUpdateRequest) -> dict:
     return {"device": renamed[0]}
 
 
-@app.post("/api/import/kobo")
+@app.post("/api/import/kobo", response_model=schemas.ImportResponse, response_model_exclude_unset=True)
 def post_import_kobo(request: DeviceAssignmentRequest | None = None) -> dict:
     try:
         result = import_from_kobo(store(), device=resolve_assigned_device(request, source="kobo"))
@@ -346,7 +347,7 @@ def post_import_kobo(request: DeviceAssignmentRequest | None = None) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.post("/api/import/kobo/auto")
+@app.post("/api/import/kobo/auto", response_model=schemas.AutoImportResult, response_model_exclude_unset=True)
 def post_auto_import_kobo() -> dict:
     try:
         return auto_import_from_kobo(store())
@@ -356,7 +357,7 @@ def post_auto_import_kobo() -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.post("/api/import/upload")
+@app.post("/api/import/upload", response_model=schemas.ImportResponse, response_model_exclude_unset=True)
 # FastAPI runs sync endpoints in its worker pool, including file I/O and dashboard builds.
 def post_import_upload(
     file: UploadFile = File(...),
@@ -405,7 +406,7 @@ def post_import_upload(
                 pass
 
 
-@app.get("/api/snapshots")
+@app.get("/api/snapshots", response_model=schemas.SnapshotsResponse, response_model_exclude_unset=True)
 def get_snapshots(device_id: str = "all") -> dict:
     snapshot_rows = store().list_snapshots()
     backup_rows = backup_store().list_backups()
@@ -416,7 +417,7 @@ def get_snapshots(device_id: str = "all") -> dict:
     return {"snapshots": [with_effective_device(snapshot, group_by_raw_id) for snapshot in snapshot_rows]}
 
 
-@app.patch("/api/snapshots/{snapshot_id}/device")
+@app.patch("/api/snapshots/{snapshot_id}/device", response_model=schemas.SnapshotResponse, response_model_exclude_unset=True)
 def patch_snapshot_device(snapshot_id: str, request: DeviceAssignmentRequest) -> dict:
     device = resolve_assigned_device(request, source="manual")
     if device is None:
@@ -428,7 +429,7 @@ def patch_snapshot_device(snapshot_id: str, request: DeviceAssignmentRequest) ->
     return {"snapshot": snapshot.__dict__}
 
 
-@app.get("/api/backups")
+@app.get("/api/backups", response_model=schemas.BackupsResponse, response_model_exclude_unset=True)
 def get_backups(device_id: str = "all") -> dict:
     try:
         snapshot_rows = store().list_snapshots()
@@ -442,7 +443,7 @@ def get_backups(device_id: str = "all") -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/backups/kobo")
+@app.post("/api/backups/kobo", response_model=schemas.BackupResponse, response_model_exclude_unset=True)
 def post_backup_kobo() -> dict:
     try:
         return backup_store().create_from_kobo()
@@ -450,7 +451,7 @@ def post_backup_kobo() -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@app.get("/api/backups/{backup_id}/restore-preview")
+@app.get("/api/backups/{backup_id}/restore-preview", response_model=schemas.RestorePreview, response_model_exclude_unset=True)
 def get_restore_preview(backup_id: str) -> dict:
     try:
         return backup_store().restore_preview(backup_id)
@@ -459,7 +460,7 @@ def get_restore_preview(backup_id: str) -> dict:
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
-@app.post("/api/backups/{backup_id}/restore")
+@app.post("/api/backups/{backup_id}/restore", response_model=schemas.RestoreResult, response_model_exclude_unset=True)
 def post_restore_backup(backup_id: str, request: RestoreRequest) -> dict:
     try:
         return backup_store().restore(
@@ -472,7 +473,7 @@ def post_restore_backup(backup_id: str, request: RestoreRequest) -> dict:
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
-@app.get("/api/dashboard")
+@app.get("/api/dashboard", response_model=schemas.Dashboard, response_model_exclude_unset=True)
 def get_dashboard(snapshot_id: str = "latest", device_id: str = "all") -> dict:
     if snapshot_id in {"latest", "aggregate"}:
         if device_id and device_id != "all":

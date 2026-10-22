@@ -84,6 +84,11 @@ uv run pytest
 npm test --prefix frontend
 ```
 
+Public response models live in `backend/app/schemas.py`. After changing an API
+contract, run `npm run generate:types --prefix frontend`; generated TypeScript
+types are checked in. `npm run check:types --prefix frontend` detects stale
+types without starting the backend or reading local data.
+
 ## Local data
 
 Imported database and sidecar metadata snapshots are stored under `data/snapshots/`, with metadata in `data/manifest.json`. Recovery archives and v2 dictionary objects are stored under `data/backups/` with restrictive local permissions. Archives may contain credentials from KOReader integrations. The entire `data/` directory is ignored by Git.
