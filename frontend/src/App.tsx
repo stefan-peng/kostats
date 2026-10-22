@@ -21,7 +21,6 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import {
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,

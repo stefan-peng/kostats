@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
-from starlette.concurrency import run_in_threadpool
+from fastapi.concurrency import run_in_threadpool
 
 from .config import data_dir
 
