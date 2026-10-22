@@ -21,6 +21,7 @@ from .config import (
 from .covers import populate_cover_cache
 from .devices import LEGACY_DEVICE_ID, DeviceRegistry, detect_device_identity
 from .errors import ImportError
+from .persistence import index_lock
 from .storage import SnapshotStore, combined_content_hash, copy_sqlite_database, hash_file
 from .sidecars import build_sidecar_snapshot, serialize_sidecar_snapshot, sidecar_snapshot_hash
 
@@ -136,7 +137,7 @@ def import_from_kobo(store: SnapshotStore, volume: Path | None = None, device: d
         raise ImportError("Kobo is mounted, but no KOReader statistics.sqlite3 file was found.")
 
     root = Path(status["mount_path"])
-    with DEVICE_LOCK:
+    with DEVICE_LOCK, index_lock(store.root / ".device-operation"):
         device = device or DeviceRegistry(store.root).ensure_for_volume(root)
         sidecar_snapshot = build_sidecar_snapshot(root)
         try:
@@ -260,7 +261,7 @@ def _auto_import_from_kobo(store: SnapshotStore, status: dict[str, Any]) -> dict
         return result
 
     source = Path(status["selected_path"])
-    with AUTO_IMPORT_LOCK:
+    with AUTO_IMPORT_LOCK, index_lock(store.root / ".device-operation"):
         registry = DeviceRegistry(store.root)
         detected = detect_device_identity(Path(status["mount_path"]))
         device = resolve_auto_import_device(store, registry, detected)

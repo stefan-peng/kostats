@@ -88,6 +88,13 @@ npm test --prefix frontend
 
 Imported database and sidecar metadata snapshots are stored under `data/snapshots/`, with metadata in `data/manifest.json`. Recovery archives and v2 dictionary objects are stored under `data/backups/` with restrictive local permissions. Archives may contain credentials from KOReader integrations. The entire `data/` directory is ignored by Git.
 
+Manifest updates use unique temporary files, flush contents before atomic
+replacement, and serialize read/modify/write operations across threads and
+processes. Device import, backup, and restore operations also share a process
+lock within the same data directory. Keep all processes that access one device
+on the same `KOSTATS_DATA_DIR`; different data directories do not share locks.
+Restore still uses a safety backup rather than transactional rollback.
+
 ## Internal diagnostics for agents
 
 The backend records private diagnostics in `data/diagnostics/events.sqlite3`

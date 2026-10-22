@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .persistence import atomic_json, serialized
+
 
 LEGACY_DEVICE_ID = "primary-kobo"
 UPLOAD_DEVICE_ID = "uploaded-databases"
@@ -105,9 +107,7 @@ class DeviceRegistry:
 
     def save(self, payload: dict[str, Any]) -> None:
         self.ensure()
-        temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.replace(self.path)
+        atomic_json(self.path, payload)
 
     def list_devices(self) -> list[dict[str, Any]]:
         return sorted(self.load()["devices"], key=lambda item: item.get("label") or item["id"])
@@ -115,6 +115,7 @@ class DeviceRegistry:
     def resolve(self, device_id: str) -> dict[str, Any] | None:
         return next((item for item in self.load()["devices"] if item["id"] == device_id), None)
 
+    @serialized("path")
     def upsert(
         self,
         *,
@@ -151,6 +152,7 @@ class DeviceRegistry:
         self.save(payload)
         return existing
 
+    @serialized("path")
     def create_manual(self, label: str, *, source: str = "manual") -> dict[str, Any] | None:
         clean = label.strip()
         if not clean:
@@ -174,6 +176,7 @@ class DeviceRegistry:
             label_source="manual",
         )
 
+    @serialized("path")
     def rename(self, device_id: str, label: str) -> dict[str, Any] | None:
         clean = label.strip()
         if not clean:

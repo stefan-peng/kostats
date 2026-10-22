@@ -15,6 +15,7 @@ from .config import data_dir
 from .devices import DeviceRegistry
 from .errors import ImportError, UnsupportedSchemaError
 from .sqlite_stats import SnapshotMeta, build_dashboard, read_user_version
+from .persistence import atomic_json, index_lock, serialized
 
 
 class SnapshotStore:
@@ -37,11 +38,7 @@ class SnapshotStore:
 
     def save_manifest(self, manifest: dict[str, Any]) -> None:
         self.ensure()
-        tmp_path = self.manifest_path.with_suffix(".json.tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(manifest, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-        tmp_path.replace(self.manifest_path)
+        atomic_json(self.manifest_path, manifest)
 
     def list_snapshots(self) -> list[dict[str, Any]]:
         manifest = self.load_manifest()
@@ -96,6 +93,7 @@ class SnapshotStore:
                 return SnapshotMeta(**self.with_device_defaults(item))
         return None
 
+    @serialized("manifest_path")
     def assign_device(self, snapshot_id: str, device: dict[str, Any]) -> SnapshotMeta | None:
         manifest = self.load_manifest()
         for item in manifest["snapshots"]:
@@ -256,9 +254,10 @@ class SnapshotStore:
                 sidecar_destination.unlink(missing_ok=True)
             raise
 
-        manifest = self.load_manifest()
-        manifest["snapshots"].append(meta.__dict__)
-        self.save_manifest(manifest)
+        with index_lock(self.manifest_path):
+            manifest = self.load_manifest()
+            manifest["snapshots"].append(meta.__dict__)
+            self.save_manifest(manifest)
         return meta
 
 

@@ -10,7 +10,6 @@ import re
 import shutil
 import sqlite3
 import tempfile
-import threading
 import unicodedata
 import zipfile
 import zlib
@@ -24,6 +23,7 @@ from .devices import DeviceRegistry
 from .device import DEVICE_LOCK, device_status
 from .errors import BackupError
 from .lua_table import LuaTableError, decode_string, parse_lua_table
+from .persistence import atomic_json, index_lock
 from .sidecars import normalize_sidecar, sidecar_candidates
 from .storage import copy_sqlite_database
 
@@ -301,7 +301,6 @@ class RecoveryBackupStore:
         self.backups_dir = root / "backups"
         self.dictionary_objects_dir = self.backups_dir / "dictionary-objects"
         self.index_path = self.backups_dir / "manifest.json"
-        self._index_lock = threading.Lock()
 
     def ensure(self) -> None:
         self.backups_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -372,10 +371,7 @@ class RecoveryBackupStore:
 
     def save_index(self, index: dict[str, Any]) -> None:
         self.ensure()
-        temporary = self.index_path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(index, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temporary.chmod(0o600)
-        temporary.replace(self.index_path)
+        atomic_json(self.index_path, index)
 
     def list_backups(self) -> list[dict[str, Any]]:
         return sorted(
@@ -433,7 +429,7 @@ class RecoveryBackupStore:
         root = Path(status["mount_path"])
         if not root.is_dir():
             raise BackupError("The Kobo mount is not a readable directory.")
-        with DEVICE_LOCK:
+        with DEVICE_LOCK, index_lock(self.root / ".device-operation"):
             return self._create(root, source=source, force=force)
 
     def _create(self, volume: Path, *, source: str, force: bool) -> dict[str, Any]:
@@ -574,7 +570,7 @@ class RecoveryBackupStore:
             if isinstance(exc, BackupError):
                 raise
             raise BackupError("Could not write the recovery backup archive.") from exc
-        with self._index_lock:
+        with index_lock(self.index_path):
             index = self.load_index()
             duplicate = next(
                 (
@@ -698,7 +694,7 @@ class RecoveryBackupStore:
         if not koreader_root.is_dir():
             raise BackupError("KOReader was not found under .adds/koreader on the mounted Kobo.")
 
-        with DEVICE_LOCK:
+        with DEVICE_LOCK, index_lock(self.root / ".device-operation"):
             manifest, archive = self.load_archive(identifier)
             try:
                 self.validate_archive(manifest, archive)
