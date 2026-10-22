@@ -6,6 +6,7 @@ import calendar
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import time
@@ -13,9 +14,10 @@ import unicodedata
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .reading_progress import coverage, estimate_book, merge_intervals, normalized_pages, page_interval
 from .errors import UnsupportedSchemaError
@@ -109,14 +111,35 @@ def pick(columns: set[str], candidates: list[str], *, required: bool = True) -> 
     return None
 
 
-def local_dt(timestamp: Any) -> datetime | None:
+def local_timezone() -> tzinfo | None:
+    """Load timezone rules once per build, retaining the OS fallback elsewhere."""
+    try:
+        if "TZ" in os.environ:
+            name = os.environ["TZ"].removeprefix(":")
+            if not name.startswith("/"):
+                return ZoneInfo(name or "UTC")
+            path = Path(name)
+        else:
+            path = Path("/etc/localtime")
+        with path.open("rb") as handle:
+            return ZoneInfo.from_file(handle)
+    except (OSError, ValueError, ZoneInfoNotFoundError):
+        return None
+
+
+def local_dt(timestamp: Any, zone: tzinfo | None = None) -> datetime | None:
     if timestamp is None:
         return None
     try:
         value = float(timestamp)
         if value <= 0 or not math.isfinite(value):
             return None
-        return datetime.fromtimestamp(value).astimezone()
+        if zone is None:
+            return datetime.fromtimestamp(value, timezone.utc).astimezone()
+        result = datetime.fromtimestamp(value, zone)
+        # Preserve the fixed-offset semantics of astimezone() without repeatedly
+        # asking macOS to read timezone rules for every statistics row.
+        return result.replace(tzinfo=timezone(result.utcoffset(), result.tzname()), fold=0)
     except (TypeError, ValueError, OverflowError, OSError):
         return None
 
@@ -450,6 +473,8 @@ def build_dashboard(
     if not path.exists():
         raise FileNotFoundError(path)
 
+    zone = local_timezone()
+
     sidecar_records = load_sidecar_snapshot(Path(snapshot.sidecar_path) if snapshot and snapshot.sidecar_path else None)
     sidecars_by_md5, sidecars_by_title_author = build_sidecar_indexes(sidecar_records)
 
@@ -549,7 +574,7 @@ def build_dashboard(
         if duration <= 0 or not math.isfinite(duration):
             continue
 
-        started = local_dt(row["started_at"])
+        started = local_dt(row["started_at"], zone)
         if started is None:
             continue
         try:
@@ -600,7 +625,7 @@ def build_dashboard(
         book["time_seconds"] += duration
         book["day_seconds"][reading_date] += duration
 
-        opened = max(local_dt(row["last_open"]) or started, started)
+        opened = max(local_dt(row["last_open"], zone) or started, started)
         opened_ts = opened.timestamp()
         if opened_ts > book["last_open_timestamp"]:
             book["last_open_timestamp"] = opened_ts
@@ -631,7 +656,7 @@ def build_dashboard(
         book_id = str(row["book_id"])
         if book_id not in books:
             book = seed_book(book_id, row["title"], row["authors"], row["md5"], row["series"], row["language"], sidecars_by_md5.get(row["md5"]))
-            opened = local_dt(row["last_open"])
+            opened = local_dt(row["last_open"], zone)
             book["last_open_timestamp"] = opened.timestamp() if opened else 0.0
             books[book_id] = book
 
@@ -742,7 +767,7 @@ def build_dashboard(
             else round(float(percent_finished) * 100) if percent_finished is not None else page_progress
         )
         last_open = (
-            datetime.fromtimestamp(latest_book["last_open_timestamp"]).astimezone().isoformat()
+            local_dt(latest_book["last_open_timestamp"], zone).isoformat()
             if latest_book["last_open_timestamp"]
             else None
         )
