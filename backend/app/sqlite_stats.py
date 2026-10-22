@@ -5,8 +5,10 @@ from .diagnostics import observed
 import calendar
 import hashlib
 import json
+import math
 import re
 import sqlite3
+import time
 import unicodedata
 from collections import defaultdict
 from contextlib import contextmanager
@@ -18,6 +20,11 @@ from typing import Any, Iterator
 from .reading_progress import coverage, estimate_book, merge_intervals, normalized_pages, page_interval
 from .errors import UnsupportedSchemaError
 from .sidecars import load_sidecar_snapshot
+
+
+MAX_SQLITE_STEPS = 100_000_000
+MAX_SQLITE_SECONDS = 10
+MAX_DASHBOARD_ROWS = 500_000
 
 
 @dataclass(frozen=True)
@@ -44,13 +51,33 @@ def quote_identifier(identifier: str) -> str:
 
 @contextmanager
 def open_readonly(path: Path) -> Iterator[sqlite3.Connection]:
-    uri = f"file:{path}?mode=ro"
+    uri = path.resolve().as_uri() + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
+    steps = 0
+    deadline = time.monotonic() + MAX_SQLITE_SECONDS
+
+    def budget_exceeded() -> int:
+        nonlocal steps
+        steps += 10_000
+        return int(steps > MAX_SQLITE_STEPS or time.monotonic() > deadline)
+
     try:
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("PRAGMA trusted_schema=OFF")
+        conn.set_progress_handler(budget_exceeded, 10_000)
         yield conn
+    except sqlite3.DatabaseError as exc:
+        raise UnsupportedSchemaError("SQLite input is unreadable, unsafe, or exceeds the query budget.") from exc
     finally:
         conn.close()
+
+
+def bounded_rows(cursor: sqlite3.Cursor) -> list[sqlite3.Row]:
+    rows = cursor.fetchmany(MAX_DASHBOARD_ROWS + 1)
+    if len(rows) > MAX_DASHBOARD_ROWS:
+        raise UnsupportedSchemaError("SQLite input exceeds the dashboard row limit.")
+    return rows
 
 
 def read_user_version(path: Path) -> int:
@@ -87,11 +114,11 @@ def local_dt(timestamp: Any) -> datetime | None:
         return None
     try:
         value = float(timestamp)
-    except (TypeError, ValueError):
+        if value <= 0 or not math.isfinite(value):
+            return None
+        return datetime.fromtimestamp(value).astimezone()
+    except (TypeError, ValueError, OverflowError, OSError):
         return None
-    if value <= 0:
-        return None
-    return datetime.fromtimestamp(value).astimezone()
 
 
 def month_key(dt: datetime) -> str:
@@ -496,8 +523,8 @@ def build_dashboard(
 
         catalog_parts = [part for part in select_parts if part.startswith("b.") or part.startswith("NULL AS")]
         catalog_parts.append(f"b.{quote_identifier(book_id_col)} AS book_id")
-        catalog_rows = conn.execute(f'SELECT {", ".join(catalog_parts)} FROM book b').fetchall()
-        rows = conn.execute(
+        catalog_rows = bounded_rows(conn.execute(f'SELECT {", ".join(catalog_parts)} FROM book b'))
+        rows = bounded_rows(conn.execute(
             f"""
             SELECT {", ".join(select_parts)}
             FROM {quote_identifier(source_table)} d
@@ -505,7 +532,7 @@ def build_dashboard(
               ON b.{quote_identifier(book_id_col)} = d.{quote_identifier(data_book_id_col)}
             WHERE d.{quote_identifier(duration_col)} IS NOT NULL
             """
-        ).fetchall()
+        ))
 
     day_seconds: dict[str, float] = defaultdict(float)
     day_source_book_ids: dict[str, set[str]] = defaultdict(set)
@@ -517,13 +544,17 @@ def build_dashboard(
     for row in rows:
         try:
             duration = float(row["duration"] or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
-        if duration <= 0:
+        if duration <= 0 or not math.isfinite(duration):
             continue
 
         started = local_dt(row["started_at"])
         if started is None:
+            continue
+        try:
+            ended = started + timedelta(seconds=duration)
+        except OverflowError:
             continue
 
         book_id = str(row["book_id"])
@@ -536,7 +567,7 @@ def build_dashboard(
             {
                 "book_id": book_id,
                 "started_at": started,
-                "ended_at": started + timedelta(seconds=duration),
+                "ended_at": ended,
                 "duration": duration,
                 "interval": page_interval(row["page"], row["event_total_pages"] if total_pages_col else row["book_pages"]),
             }

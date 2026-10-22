@@ -6,12 +6,15 @@ import math
 from typing import Any
 
 
+MAX_TOTAL_PAGES = 1_000_000
+
+
 def page_interval(page: Any, total: Any) -> tuple[float, float] | None:
     try:
         page, total = int(page), int(total)
     except (TypeError, ValueError, OverflowError):
         return None
-    if total <= 0 or not 1 <= page <= total:
+    if not 0 < total <= MAX_TOTAL_PAGES or not 1 <= page <= total:
         return None
     return ((page - 1) / total, page / total)
 

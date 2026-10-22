@@ -66,6 +66,13 @@ port. Database uploads are limited to 512 MiB, with 1 MiB of multipart overhead;
 other request bodies are limited to 64 KiB. Limits apply while receiving data,
 including requests without a Content-Length header.
 
+Statistics databases are opened read-only with untrusted-schema mode. Each read
+connection has a 10-second / 100-million SQLite instruction budget; dashboard
+queries accept at most 500,000 catalog rows and 500,000 event rows. Imports that
+exceed these bounds are rejected without recording a snapshot. Invalid event
+timestamps/durations are skipped, and page totals above 1,000,000 are treated as
+unknown pagination.
+
 The app works when the Kobo is not connected. On startup and while open, it checks a mounted Kobo every 15 seconds and imports a new local snapshot when the KOReader database or normalized book metadata has changed; it also refreshes changed EPUB cover art without creating an otherwise identical snapshot. The device status shows whether the connected Kobo matches the latest imported snapshot, and the app continues showing the latest local snapshot if no device is present. macOS uses `/Volumes/KOBOeReader`; Linux checks active mounts under `/media`, `/run/media`, and `/mnt`; Windows scans mounted drive letters such as `E:\` for a Kobo volume or KOReader statistics database.
 
 Set `KOSTATS_KOBO_VOLUME` to override auto-detection, for example `KOSTATS_KOBO_VOLUME=E:\` on Windows, `KOSTATS_KOBO_VOLUME=/Volumes/KOBOeReader` on macOS, or `KOSTATS_KOBO_VOLUME=/media/$USER/KOBOeReader` on Linux.
