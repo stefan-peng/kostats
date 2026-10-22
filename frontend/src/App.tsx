@@ -1,3 +1,5 @@
+import { QueryClientProvider, useMutation } from "@tanstack/react-query";
+import { createQueryClient, useServerData } from "./queries";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
@@ -150,11 +152,8 @@ import {
   autoImportFromKobo,
   createKoboBackup,
   getBackups,
-  getDashboard,
   getDevices,
-  getDeviceStatus,
   getRestorePreview,
-  getSnapshots,
   importFromKobo,
   reassignSnapshot,
   renameDevice,
@@ -162,6 +161,7 @@ import {
   uploadDatabase,
 } from "./api";
 import type {
+  AutoImportResult,
   BookStats,
   Dashboard,
   DeviceSummary,
@@ -2858,12 +2858,22 @@ function AppSidebarBrand({ onSelect }: { onSelect: () => void }) {
 }
 
 export default function App() {
-  const [device, setDevice] = useState<DeviceStatus | null>(null);
-  const [devices, setDevices] = useState<DeviceSummary[]>([]);
+  const [client] = useState(createQueryClient);
+  return <QueryClientProvider client={client}><AppContent /></QueryClientProvider>;
+}
+
+function AppContent() {
   const [deviceFilter, setDeviceFilter] = useState<DeviceFilter>("all");
-  const [dashboard, setDashboard] = useState<Dashboard>(emptyDashboard);
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
-  const [backups, setBackups] = useState<RecoveryBackup[]>([]);
+  const [snapshotSelection, setSnapshotSelection] = useState("latest");
+  const { device, devices, dashboard, snapshots, backups, client, setDashboard,
+    setDevices, setSnapshots, setBackups, fetchData, fetchDevice } = useServerData(deviceFilter, snapshotSelection, emptyDashboard);
+  const autoImport = useMutation({ mutationFn: autoImportFromKobo });
+  const manualImport = useMutation({ mutationFn: importFromKobo });
+  const upload = useMutation({ mutationFn: ({ file, assignment }: { file: File; assignment: DeviceAssignment }) => uploadDatabase(file, assignment) });
+  const backup = useMutation({ mutationFn: createKoboBackup });
+  const restore = useMutation({ mutationFn: ({ id, extensions }: { id: string; extensions: boolean }) => restoreBackup(id, extensions) });
+  const rename = useMutation({ mutationFn: ({ id, label }: { id: string; label: string }) => renameDevice(id, label) });
+  const reassign = useMutation({ mutationFn: ({ id, deviceId }: { id: string; deviceId: string }) => reassignSnapshot(id, { device_id: deviceId }) });
   const [importDevice, setImportDevice] = useState("auto");
   const [importDeviceLabel, setImportDeviceLabel] = useState("");
   const [uploadDevice, setUploadDevice] = useState("new");
@@ -2886,11 +2896,19 @@ export default function App() {
   }, [activeView]);
   const pendingUploadAssignment = useRef<DeviceAssignment | undefined>(undefined);
   const selectedSnapshotId = useRef<string | null>(null);
-  const deviceStatusKey = useRef<string | null>(null);
-  const latestDeviceStatus = useRef<DeviceStatus | null>(null);
   const deviceStatusRefreshInFlight = useRef(false);
   const dashboardRefreshId = useRef(0);
   const hasUsableDashboard = useRef(false);
+  const autoImportFlight = useRef<Promise<AutoImportResult> | null>(null);
+
+  function runAutoImport() {
+    if (autoImportFlight.current) return autoImportFlight.current;
+    const request = autoImport.mutateAsync().finally(() => {
+      if (autoImportFlight.current === request) autoImportFlight.current = null;
+    });
+    autoImportFlight.current = request;
+    return request;
+  }
 
   function clearActionError(key: ActionErrorKey) {
     setActionErrors((current) => ({ ...current, [key]: undefined }));
@@ -2903,9 +2921,9 @@ export default function App() {
     }));
   }
 
-  function publishDashboard(nextDashboard: Dashboard) {
+  function publishDashboard(nextDashboard: Dashboard, snapshot = snapshotSelection, deviceId = deviceFilter) {
     hasUsableDashboard.current = nextDashboard.has_data;
-    setDashboard(nextDashboard);
+    setDashboard(nextDashboard, snapshot, deviceId);
     setCriticalError(null);
     setRefreshError(null);
   }
@@ -2920,16 +2938,12 @@ export default function App() {
   }
 
   function publishDeviceStatus(nextDeviceStatus: DeviceStatus) {
-    latestDeviceStatus.current = nextDeviceStatus;
-    const nextKey = JSON.stringify(nextDeviceStatus);
-    if (nextKey === deviceStatusKey.current) return;
-    deviceStatusKey.current = nextKey;
-    setDevice(nextDeviceStatus);
+    client.setQueryData(["device-status"], nextDeviceStatus);
   }
 
   async function checkAutoImport(refreshId: number) {
     try {
-      const result = await autoImportFromKobo();
+      const result = await runAutoImport();
       if (refreshId !== dashboardRefreshId.current) return null;
       if (!result.device) throw new Error("Auto-import response did not include device status");
       setAutoImportError(null);
@@ -2950,7 +2964,7 @@ export default function App() {
     deviceStatusRefreshInFlight.current = true;
     const refreshId = dashboardRefreshId.current;
     try {
-      const nextDeviceStatus = await getDeviceStatus();
+      const nextDeviceStatus = await fetchDevice();
       if (refreshId !== dashboardRefreshId.current) return;
       publishDeviceStatus(nextDeviceStatus);
       const readyToImport =
@@ -2980,13 +2994,13 @@ export default function App() {
   async function refresh(skipAutoImport = false, knownDeviceMatch = false) {
     const refreshId = ++dashboardRefreshId.current;
     try {
-      let deviceStatus = await getDeviceStatus();
+      let deviceStatus = await fetchDevice();
       if (refreshId !== dashboardRefreshId.current) return;
       let nextAutoImportError: UiError | null = null;
       let nextLatestSnapshotMatchesDevice = knownDeviceMatch;
       if (!skipAutoImport && deviceStatus.mounted && deviceStatus.database_found && !deviceStatus.permission_error) {
         try {
-          const autoResult = await autoImportFromKobo();
+          const autoResult = await runAutoImport();
           if (!autoResult.device) throw new Error("Auto-import response did not include device status");
           deviceStatus = autoResult.device;
           nextLatestSnapshotMatchesDevice =
@@ -3001,22 +3015,16 @@ export default function App() {
       }
       if (refreshId !== dashboardRefreshId.current) return;
       const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
-      const [deviceData, dashboardData, snapshotData, backupData] = await Promise.all([
-        getDevices(),
-        getDashboard(dashboardSnapshotId, deviceFilter),
-        getSnapshots(deviceFilter),
-        getBackups(deviceFilter),
-      ]);
+      const next = await fetchData(deviceFilter, dashboardSnapshotId);
+      const { dashboard: dashboardData } = next;
+      const snapshotData = { snapshots: next.snapshots };
       if (refreshId !== dashboardRefreshId.current) return;
       const lastSuccessfulSnapshot = snapshotData.snapshots[0] ?? dashboardData.snapshot;
       if (nextAutoImportError && lastSuccessfulSnapshot) {
         nextAutoImportError.message = `Kobo could not be updated. The last successful import from ${formatDateTime(lastSuccessfulSnapshot.imported_at)} is still being shown.`;
       }
       publishDeviceStatus(deviceStatus);
-      setDevices(deviceData.devices);
-      publishDashboard(dashboardData);
-      setSnapshots(snapshotData.snapshots);
-      setBackups(backupData.backups);
+      publishDashboard(dashboardData, dashboardSnapshotId);
       setAutoImportError(nextAutoImportError);
       setLatestSnapshotMatchesDevice(nextLatestSnapshotMatchesDevice);
     } catch (err) {
@@ -3031,10 +3039,13 @@ export default function App() {
     setAutoImportError(null);
     try {
       const snapshotDevice = snapshots.find((snapshot) => snapshot.id === snapshotId)?.device_id ?? deviceFilter;
-      const selectedDashboard = await getDashboard(snapshotId, snapshotDevice);
+      const { dashboard: selectedDashboard } = await fetchData(snapshotDevice, snapshotId);
       selectedSnapshotId.current = snapshotId;
+      setSnapshotSelection(snapshotId);
       setDeviceFilter(snapshotDevice);
-      publishDashboard(selectedDashboard);
+      hasUsableDashboard.current = selectedDashboard.has_data;
+      setCriticalError(null);
+      setRefreshError(null);
       setReadingDateFilter(null);
       selectView("dashboard");
     } catch (err) {
@@ -3054,6 +3065,8 @@ export default function App() {
       window.clearInterval(id);
     };
   }, [deviceFilter]);
+
+  useEffect(() => () => { void client.cancelQueries(); client.clear(); }, [client]);
 
   useEffect(() => {
     const syncViewFromHistory = () => {
@@ -3075,9 +3088,10 @@ export default function App() {
     try {
       const assignment = assignmentFromSelection(importDevice, importDeviceLabel);
       if (assignment?.new_device_label === "") throw new Error("Enter a device name before importing.");
-      const result = await importFromKobo(assignment);
+      const result = await manualImport.mutateAsync(assignment);
       selectedSnapshotId.current = null;
-      publishDashboard(result.dashboard);
+      setSnapshotSelection("latest");
+      publishDashboard(result.dashboard, "latest");
       setReadingDateFilter(null);
       selectView("dashboard");
       await refresh();
@@ -3117,9 +3131,10 @@ export default function App() {
       const assignment = pendingUploadAssignment.current ?? assignmentFromSelection(importDevice, importDeviceLabel);
       if (!assignment) throw new Error("Choose a device or enter a device name before uploading.");
       if (assignment?.new_device_label === "") throw new Error("Enter a device name before uploading.");
-      const result = await uploadDatabase(file, assignment);
+      const result = await upload.mutateAsync({ file, assignment });
       selectedSnapshotId.current = null;
-      publishDashboard(result.dashboard);
+      setSnapshotSelection("latest");
+      publishDashboard(result.dashboard, "latest");
       setReadingDateFilter(null);
       selectView("dashboard");
       await refresh();
@@ -3137,7 +3152,7 @@ export default function App() {
   async function handleBackup() {
     setBusyAction("backup");
     try {
-      const created = await createKoboBackup();
+      const created = await backup.mutateAsync();
       setBackups((current) => [
         created.backup,
         ...current.filter((backup) => backup.id !== created.backup.id),
@@ -3159,7 +3174,7 @@ export default function App() {
   async function handleRestore(backupId: string, extensions: boolean) {
     setBusyAction("restore");
     try {
-      const result = await restoreBackup(backupId, extensions);
+      const result = await restore.mutateAsync({ id: backupId, extensions });
       getBackups(deviceFilter)
         .then((backupData) => setBackups(backupData.backups))
         .catch(() => undefined);
@@ -3175,24 +3190,16 @@ export default function App() {
   async function handleDeviceFilterChange(nextDeviceId: DeviceFilter) {
     setDeviceFilter(nextDeviceId);
     selectedSnapshotId.current = null;
+    setSnapshotSelection("latest");
     setReadingDateFilter(null);
   }
 
   async function handleRenameDevice(deviceId: string, label: string) {
     clearActionError("rename");
     try {
-      await renameDevice(deviceId, label.trim());
+      await rename.mutateAsync({ id: deviceId, label: label.trim() });
       const dashboardSnapshotId = selectedSnapshotId.current ?? "latest";
-      const [deviceData, dashboardData, snapshotData, backupData] = await Promise.all([
-        getDevices(),
-        getDashboard(dashboardSnapshotId, deviceFilter),
-        getSnapshots(deviceFilter),
-        getBackups(deviceFilter),
-      ]);
-      setDevices(deviceData.devices);
-      publishDashboard(dashboardData);
-      setSnapshots(snapshotData.snapshots);
-      setBackups(backupData.backups);
+      await fetchData(deviceFilter, dashboardSnapshotId);
       toast.success("Device label saved");
     } catch (err) {
       reportActionError("rename", err, "The device label could not be saved.");
@@ -3203,11 +3210,14 @@ export default function App() {
     setBusyAction("snapshot");
     clearActionError("snapshot");
     try {
-      const result = await reassignSnapshot(snapshotId, { device_id: targetDeviceId });
+      const result = await reassign.mutateAsync({ id: snapshotId, deviceId: targetDeviceId });
       setSnapshots((current) => current.map((snapshot) => (snapshot.id === snapshotId ? result.snapshot : snapshot)));
       if (dashboard.snapshot?.id === snapshotId) {
-        setDeviceFilter(result.snapshot.device_id ?? "all");
-        publishDashboard(await getDashboard(snapshotId, result.snapshot.device_id ?? "all"));
+        const nextDevice = result.snapshot.device_id ?? "all";
+        await fetchData(nextDevice, snapshotId);
+        selectedSnapshotId.current = snapshotId;
+        setSnapshotSelection(snapshotId);
+        setDeviceFilter(nextDevice);
       }
       const deviceData = await getDevices();
       setDevices(deviceData.devices);

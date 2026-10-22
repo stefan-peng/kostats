@@ -20,12 +20,12 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function getDeviceStatus(): Promise<DeviceStatus> {
-  return request<DeviceStatus>("/api/device/status");
+export function getDeviceStatus(signal?: AbortSignal): Promise<DeviceStatus> {
+  return request<DeviceStatus>("/api/device/status", { signal });
 }
 
-export function getDevices(): Promise<{ devices: DeviceSummary[] }> {
-  return request<{ devices: DeviceSummary[] }>("/api/devices");
+export function getDevices(signal?: AbortSignal): Promise<{ devices: DeviceSummary[] }> {
+  return request<{ devices: DeviceSummary[] }>("/api/devices", { signal });
 }
 
 export function renameDevice(deviceId: string, label: string): Promise<{ device: DeviceRecord }> {
@@ -44,18 +44,19 @@ export function reassignSnapshot(snapshotId: string, assignment: DeviceAssignmen
   });
 }
 
-export function getDashboard(snapshotId = "latest", deviceId = "all"): Promise<Dashboard> {
+export function getDashboard(snapshotId = "latest", deviceId = "all", signal?: AbortSignal): Promise<Dashboard> {
   return request<Dashboard>(
     `/api/dashboard?snapshot_id=${encodeURIComponent(snapshotId)}&device_id=${encodeURIComponent(deviceId)}`,
+    { signal },
   );
 }
 
-export function getSnapshots(deviceId = "all"): Promise<{ snapshots: Snapshot[] }> {
-  return request<{ snapshots: Snapshot[] }>(`/api/snapshots?device_id=${encodeURIComponent(deviceId)}`);
+export function getSnapshots(deviceId = "all", signal?: AbortSignal): Promise<{ snapshots: Snapshot[] }> {
+  return request<{ snapshots: Snapshot[] }>(`/api/snapshots?device_id=${encodeURIComponent(deviceId)}`, { signal });
 }
 
-export function getBackups(deviceId = "all"): Promise<{ backups: RecoveryBackup[] }> {
-  return request<{ backups: RecoveryBackup[] }>(`/api/backups?device_id=${encodeURIComponent(deviceId)}`);
+export function getBackups(deviceId = "all", signal?: AbortSignal): Promise<{ backups: RecoveryBackup[] }> {
+  return request<{ backups: RecoveryBackup[] }>(`/api/backups?device_id=${encodeURIComponent(deviceId)}`, { signal });
 }
 
 export function createKoboBackup(): Promise<{ created: boolean; backup: RecoveryBackup }> {

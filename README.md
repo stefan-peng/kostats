@@ -89,6 +89,12 @@ contract, run `npm run generate:types --prefix frontend`; generated TypeScript
 types are checked in. `npm run check:types --prefix frontend` detects stale
 types without starting the backend or reading local data.
 
+Frontend reads use TanStack Query, keyed by device and snapshot. Inactive data
+expires after one minute and is never persisted in browser storage. Localhost
+requests run even when the browser reports offline. Reads and mutations do not
+retry automatically; focus/reconnect events do not trigger imports. Device
+polling retains one explicit auto-import sequence before refreshing changed data.
+
 ## Local data
 
 Imported database and sidecar metadata snapshots are stored under `data/snapshots/`, with metadata in `data/manifest.json`. Recovery archives and v2 dictionary objects are stored under `data/backups/` with restrictive local permissions. Archives may contain credentials from KOReader integrations. The entire `data/` directory is ignored by Git.
