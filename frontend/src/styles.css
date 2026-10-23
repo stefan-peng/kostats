@@ -38,7 +38,7 @@
   --device-chart-4: #7c3aed;
   --device-chart-5: #c2410c;
   --device-chart-6: #0f766e;
-  --radius: 0.625rem;
+  --radius: 0.375rem;
   --sidebar: #fbfcfb;
   --sidebar-foreground: #303a34;
   --sidebar-primary: var(--primary);
@@ -48,9 +48,7 @@
   --sidebar-border: #d9e0da;
   --sidebar-ring: #207a3a;
   --shell: #dfe7e1;
-  --panel: #f4f7f4;
-  --panel-shadow: 0 8px 24px rgb(16 32 24 / 0.16), 0 2px 6px rgb(16 32 24 / 0.1);
-  --card-shadow: 0 6px 16px rgb(16 32 24 / 0.12), 0 2px 4px rgb(16 32 24 / 0.08);
+  --panel: #ffffff;
   --heatmap-empty: var(--muted);
   --heatmap-1: var(--chart-5);
   --heatmap-2: var(--chart-3);
@@ -101,8 +99,6 @@
   --sidebar-ring: #69ce7b;
   --shell: #080c09;
   --panel: #151e18;
-  --panel-shadow: 0 8px 24px rgb(0 0 0 / 0.65), 0 2px 6px rgb(0 0 0 / 0.5);
-  --card-shadow: 0 6px 16px rgb(0 0 0 / 0.45), 0 2px 4px rgb(0 0 0 / 0.35);
 }
 
 .device-pill {
@@ -139,7 +135,7 @@
 
   .primary-metric:not(:first-child) {
     border-left-width: 1px;
-    padding-left: 1.5rem;
+    padding-left: 1rem;
   }
 }
 
@@ -359,10 +355,7 @@
   cursor: pointer;
 }
 
-.app-shell [data-slot="card"] {
-  box-shadow: 0 0 0 1px var(--border), var(--card-shadow);
-}
-
+/* The workspace is a continuous canvas. Depth belongs to controls and overlays. */
 .app-shell[data-slot="sidebar-wrapper"] {
   background: var(--shell);
 }
@@ -373,7 +366,142 @@
 
 .app-shell .app-panel {
   background: var(--panel);
-  box-shadow: 0 0 0 1px var(--border), var(--panel-shadow);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.page-toolbar {
+  background: var(--secondary);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+.workspace {
+  gap: 0;
+  padding: 0;
+}
+
+.workspace [data-slot="card"] {
+  --card-spacing: 0.875rem;
+  gap: 0;
+  padding-block: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.workspace [data-slot="card-header"] {
+  align-items: center;
+  min-height: 44px;
+  padding: 0.5rem 0.875rem;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--secondary);
+}
+
+.workspace [data-slot="card-action"] {
+  align-self: center;
+}
+
+.workspace [data-slot="card-content"] {
+  padding-top: 0.875rem;
+  padding-bottom: 0.875rem;
+}
+
+/* Table bodies already supply their own row and footer spacing. */
+.workspace [data-slot="card-content"].px-0 {
+  padding: 0;
+}
+
+.workspace .table-viewport {
+  border-radius: 0;
+}
+
+.workspace [data-slot="card"] [data-slot="card"] {
+  border: 1px solid var(--border);
+}
+
+.workspace > .grid:not(.overview-summary) {
+  gap: 0;
+}
+
+.overview-summary {
+  padding: 1rem 0.875rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.overview-page [data-slot="card-title"] {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* Let section surfaces span the canvas; individual form fields stay bounded. */
+.workspace > .max-w-4xl {
+  max-width: none;
+}
+
+.workspace > [data-slot="alert"],
+.workspace > [data-slot="empty"] {
+  margin: 0.875rem;
+}
+
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="button"]:is([data-variant="default"], [data-variant="outline"], [data-variant="secondary"]),
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="select-trigger"] {
+  border-color: var(--input);
+  border-radius: 0.3rem;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 1px 1px rgb(0 0 0 / 0.16);
+}
+
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="button"]:is([data-variant="outline"], [data-variant="secondary"]),
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="select-trigger"] {
+  background-color: var(--secondary);
+}
+
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="button"]:is([data-variant="outline"], [data-variant="secondary"]):hover,
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="select-trigger"]:hover {
+  background-color: var(--muted);
+}
+
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="button"]:active:not(:disabled),
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="select-trigger"][data-state="open"] {
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.22);
+}
+
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="input"] {
+  background: var(--panel);
+  border-color: var(--input);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.12);
+}
+
+/* Preserve an explicit focus indicator alongside the tactile control shadows. */
+:where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) :is([data-slot="button"], [data-slot="select-trigger"], [data-slot="input"]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (min-width: 80rem) {
+  .overview-secondary > [data-slot="card"] + [data-slot="card"] {
+    border-left: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 47.999rem) {
+  [data-slot="sidebar"][data-mobile="true"] [data-slot="sidebar-menu-button"] {
+    min-height: 44px;
+  }
+
+  :where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="button"],
+  :where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="select-trigger"],
+  :where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="input"],
+  .app-shell [data-slot="sidebar-trigger"] {
+    min-height: 44px;
+  }
+
+  :where(.app-shell, [data-slot="dialog-content"], [data-slot="sheet-content"]) [data-slot="button"][data-size^="icon"],
+  .app-shell [data-slot="sidebar-trigger"] {
+    min-width: 44px;
+  }
 }
 
 .table-viewport {

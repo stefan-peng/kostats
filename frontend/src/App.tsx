@@ -1388,24 +1388,33 @@ function MetricCard({ label, value }: { label: string; value: string | number })
   );
 }
 
+function ReadingChartFrame({ title, embedded, children }: { title: string; embedded: boolean; children: ReactNode }) {
+  if (embedded) return <>{children}</>;
+  return (
+    <Card>
+      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
+      {children}
+    </Card>
+  );
+}
+
 function ReadingBarChart({
   title,
   data,
   valueKey,
   formatValue,
   dominant = false,
+  embedded = false,
 }: {
   title: string;
   data: Array<Record<string, string | number>>;
   valueKey: "minutes" | "hours" | "pages";
   formatValue: (value: number) => string;
   dominant?: boolean;
+  embedded?: boolean;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
+    <ReadingChartFrame title={title} embedded={embedded}>
       <CardContent>
         {data.length === 0 ? (
           <EmptyPanel icon={<CalendarDays />} title="No reading data yet" />
@@ -1461,7 +1470,7 @@ function ReadingBarChart({
           </ChartContainer>
         )}
       </CardContent>
-    </Card>
+    </ReadingChartFrame>
   );
 }
 
@@ -1471,12 +1480,14 @@ function DeviceStackedBarChart({
   devices,
   unit,
   dominant = false,
+  embedded = false,
 }: {
   title: string;
   data: Array<Record<string, string | number>>;
   devices: Array<{ id: string; label: string }>;
   unit: "minutes" | "hours";
   dominant?: boolean;
+  embedded?: boolean;
 }) {
   const config = Object.fromEntries(
     devices.map((device) => [
@@ -1495,10 +1506,7 @@ function DeviceStackedBarChart({
   const barSize = unit === "hours" ? verticalBarSizing.monthly : verticalBarSizing.compact;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
+    <ReadingChartFrame title={title} embedded={embedded}>
       <CardContent>
         {data.length === 0 || devices.length === 0 ? (
           <EmptyPanel icon={<CalendarDays />} title="No reading data yet" />
@@ -1550,7 +1558,7 @@ function DeviceStackedBarChart({
           </ChartContainer>
         )}
       </CardContent>
-    </Card>
+    </ReadingChartFrame>
   );
 }
 
@@ -2092,8 +2100,8 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
 
   return (
     <>
-      <section className="grid gap-5">
-        <div className="primary-metrics grid grid-cols-2 gap-x-6 gap-y-5">
+      <section className="overview-summary grid gap-3">
+        <div className="primary-metrics grid grid-cols-2 gap-x-4 gap-y-3">
           <PrimaryMetric label="Total reading time" value={dashboard.summary.total_time_label} />
           <PrimaryMetric label="Days read" value={dashboard.summary.reading_days.toLocaleString()} />
           <PrimaryMetric label="Books in library" value={dashboard.summary.books.toLocaleString()} />
@@ -2111,32 +2119,37 @@ function DashboardView({ dashboard }: { dashboard: Dashboard }) {
 
       <section
         data-testid="dashboard-primary-insights"
-        className="grid min-w-0 gap-4"
+        className="grid min-w-0"
       >
-        <div className="flex justify-end">
-          <ChartMetricSelect value={readingMetric} onChange={setReadingMetric} label="Reading chart metric" />
-        </div>
-        {readingMetric === "time" && dashboard.charts.devices?.length && dashboard.charts.daily_by_device?.length ? (
-          <DeviceStackedBarChart
-            title="Daily reading"
-            data={dashboard.charts.daily_by_device}
-            devices={dashboard.charts.devices}
-            unit="minutes"
-            dominant
-          />
-        ) : (
-          <ReadingBarChart
-            title="Daily reading"
-            data={dashboard.charts.daily}
-            valueKey={readingMetric === "pages" ? "pages" : "minutes"}
-            formatValue={(value) => readingMetric === "pages" ? `${formatCoverage(value, "")} pages` : formatDurationLabel(value * 60)}
-            dominant
-          />
-        )}
+        <Card>
+          <CardHeader>
+            <CardTitle>Daily reading</CardTitle>
+            <CardAction><ChartMetricSelect value={readingMetric} onChange={setReadingMetric} label="Reading chart metric" /></CardAction>
+          </CardHeader>
+          {readingMetric === "time" && dashboard.charts.devices?.length && dashboard.charts.daily_by_device?.length ? (
+            <DeviceStackedBarChart
+              title="Daily reading"
+              data={dashboard.charts.daily_by_device}
+              devices={dashboard.charts.devices}
+              unit="minutes"
+              dominant
+              embedded
+            />
+          ) : (
+            <ReadingBarChart
+              title="Daily reading"
+              data={dashboard.charts.daily}
+              valueKey={readingMetric === "pages" ? "pages" : "minutes"}
+              formatValue={(value) => readingMetric === "pages" ? `${formatCoverage(value, "")} pages` : formatDurationLabel(value * 60)}
+              dominant
+              embedded
+            />
+          )}
+        </Card>
       </section>
 
       <section className="grid gap-4">
-        <div className="grid items-start gap-4 xl:grid-cols-2">
+        <div className="overview-secondary grid items-stretch xl:grid-cols-2">
           {readingMetric === "time" && dashboard.charts.devices?.length && dashboard.charts.monthly_by_device?.length ? (
             <DeviceStackedBarChart
               title="Monthly reading by device"
@@ -2895,7 +2908,6 @@ function AppSidebarBrand({ onSelect }: { onSelect: () => void }) {
             </div>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">kostats</span>
-              <span className="truncate text-xs">KOReader statistics</span>
             </div>
           </a>
         </SidebarMenuButton>
@@ -3322,8 +3334,8 @@ function AppContent() {
   return (
     <ThemeProvider attribute="class" storageKey="kostats-theme" defaultTheme="system" enableSystem disableTransitionOnChange>
       <TooltipProvider>
-        <SidebarProvider className="app-shell">
-        <Sidebar collapsible="icon" variant="inset">
+        <SidebarProvider className="app-shell" style={{ "--sidebar-width": "12rem" } as CSSProperties}>
+        <Sidebar collapsible="icon" variant="sidebar">
           <SidebarHeader>
             <AppSidebarBrand onSelect={() => selectView("dashboard")} />
           </SidebarHeader>
@@ -3364,7 +3376,7 @@ function AppContent() {
             />
           </header>
           <div ref={pageContent} className="page-content" role="region" aria-label="Page content" tabIndex={0}>
-          <div className={cn("grid min-w-0 gap-4 p-4 md:p-6", activeView === "dashboard" && "overview-page gap-3 md:p-5")}>
+          <div className={cn("workspace grid min-w-0", activeView === "dashboard" && "overview-page")}>
             <input
               ref={fileInput}
               type="file"

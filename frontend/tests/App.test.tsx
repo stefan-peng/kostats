@@ -1010,8 +1010,11 @@ describe("App", () => {
     expect(screen.queryByText("Currently reading")).not.toBeInTheDocument();
     expect(screen.queryByText("Recently read")).not.toBeInTheDocument();
     expect(screen.getByTestId("dashboard-primary-insights")).toHaveClass("min-w-0");
+    const metricTrigger = screen.getByRole("combobox", { name: "Reading chart metric" });
+    expect(metricTrigger.closest('[data-slot="card-header"]')).toContainElement(screen.getByText("Daily reading"));
     await selectRadixOption("Reading chart metric", "Pages");
     expect(screen.getByRole("combobox", { name: "Reading chart metric" })).toHaveTextContent("Pages");
+    expect(screen.getByRole("combobox", { name: "Reading chart metric" })).toBe(metricTrigger);
     await selectRadixOption("Reading chart metric", "Time");
     expect(screen.getByRole("combobox", { name: "Reading chart metric" })).toHaveTextContent("Time");
     expect(screen.queryByText("Recent sessions")).not.toBeInTheDocument();
@@ -2303,6 +2306,11 @@ describe("App", () => {
     for (const bar of initialDailyChartCard!.querySelectorAll<SVGPathElement>("path.recharts-rectangle")) {
       expect(bar).toHaveAttribute("width", "16");
     }
+    const metricTrigger = screen.getByRole("combobox", { name: "Reading chart metric" });
+    await selectRadixOption("Reading chart metric", "Pages");
+    expect(screen.getByRole("combobox", { name: "Reading chart metric" })).toBe(metricTrigger);
+    await selectRadixOption("Reading chart metric", "Time");
+    expect(screen.getByRole("combobox", { name: "Reading chart metric" })).toBe(metricTrigger);
     await userEvent.click(screen.getByRole("link", { name: /Settings/i }));
     await userEvent.clear(screen.getByLabelText("Label for Travel Kobo"));
     await userEvent.type(screen.getByLabelText("Label for Travel Kobo"), "Primary Kobo");
