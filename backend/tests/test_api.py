@@ -862,3 +862,28 @@ def test_snapshot_fingerprint_reuses_hashes_and_detects_preserved_mtime_edits(mo
     path.unlink()
     with pytest.raises(FileNotFoundError):
         main_module.snapshot_cache_fingerprint(snapshot)
+
+
+def test_dashboard_cache_evicts_old_libraries(monkeypatch, tmp_path: Path):
+    source = tmp_path / 'statistics.sqlite3'
+    create_api_fixture(source)
+    snapshot = SnapshotStore(tmp_path / 'data').import_file(source, source_kind='upload')
+    calls = []
+
+    def build(*args, **kwargs):
+        result = {'build': len(calls)}
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(main_module, 'build_dashboard', build)
+    main_module.cached_dashboard.cache_clear()
+    try:
+        first = main_module.cached_dashboard(snapshot, (0,), '2026-10-23')
+        assert main_module.cached_dashboard(snapshot, (0,), '2026-10-23') is first
+        for index in range(1, 5):
+            main_module.cached_dashboard(snapshot, (index,), '2026-10-23')
+        assert main_module.cached_dashboard.cache_info().currsize == 4
+        assert main_module.cached_dashboard(snapshot, (0,), '2026-10-23') is not first
+        assert len(calls) == 6
+    finally:
+        main_module.cached_dashboard.cache_clear()

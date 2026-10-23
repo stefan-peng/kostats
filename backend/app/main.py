@@ -71,7 +71,8 @@ def current_local_date() -> str:
     return datetime.now().astimezone().date().isoformat()
 
 
-@lru_cache(maxsize=64)
+# Keep the active devices warm without retaining dozens of historical libraries.
+@lru_cache(maxsize=4)
 def cached_dashboard(snapshot: SnapshotMeta, fingerprint: tuple, today: str, include_all_sessions: bool = False) -> dict:
     return build_dashboard(
         Path(snapshot.path),

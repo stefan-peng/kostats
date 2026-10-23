@@ -93,3 +93,33 @@ def test_implausible_pagination_cannot_expand_a_huge_page_set(tmp_path: Path):
     dashboard = stats.build_dashboard(path)
     assert dashboard['summary']['total_time_seconds'] == 60
     assert dashboard['books'][0]['total_pages'] is None
+
+
+def test_visit_rows_are_consumed_lazily_and_keep_the_row_limit(monkeypatch):
+    consumed = []
+
+    def cursor():
+        for value in range(4):
+            consumed.append(value)
+            yield value
+
+    monkeypatch.setattr(stats, 'MAX_DASHBOARD_ROWS', 2)
+    rows = stats.iter_bounded_rows(cursor())
+    assert consumed == []
+    assert next(rows) == 0
+    assert consumed == [0]
+    assert next(rows) == 1
+    with pytest.raises(UnsupportedSchemaError, match='row limit'):
+        next(rows)
+    assert consumed == [0, 1, 2]
+
+
+def test_streamed_visit_limit_rejects_dashboard(monkeypatch, tmp_path):
+    path = tmp_path / 'visits.sqlite3'
+    create_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO book VALUES (1, 'Book')")
+        conn.executemany('INSERT INTO page_stat_data VALUES (1, 1, ?, 10)', [(1769904000 + i,) for i in range(3)])
+    monkeypatch.setattr(stats, 'MAX_DASHBOARD_ROWS', 2)
+    with pytest.raises(UnsupportedSchemaError, match='row limit'):
+        stats.build_dashboard(path)

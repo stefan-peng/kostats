@@ -75,6 +75,14 @@ def open_readonly(path: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def iter_bounded_rows(cursor: sqlite3.Cursor) -> Iterator[sqlite3.Row]:
+    """Consume visits without retaining a second copy of the event history."""
+    for count, row in enumerate(cursor, start=1):
+        if count > MAX_DASHBOARD_ROWS:
+            raise UnsupportedSchemaError("SQLite input exceeds the dashboard row limit.")
+        yield row
+
+
 def bounded_rows(cursor: sqlite3.Cursor) -> list[sqlite3.Row]:
     rows = cursor.fetchmany(MAX_DASHBOARD_ROWS + 1)
     if len(rows) > MAX_DASHBOARD_ROWS:
@@ -549,7 +557,7 @@ def build_dashboard(
         catalog_parts = [part for part in select_parts if part.startswith("b.") or part.startswith("NULL AS")]
         catalog_parts.append(f"b.{quote_identifier(book_id_col)} AS book_id")
         catalog_rows = bounded_rows(conn.execute(f'SELECT {", ".join(catalog_parts)} FROM book b'))
-        rows = bounded_rows(conn.execute(
+        rows = iter_bounded_rows(conn.execute(
             f"""
             SELECT {", ".join(select_parts)}
             FROM {quote_identifier(source_table)} d
@@ -559,85 +567,85 @@ def build_dashboard(
             """
         ))
 
-    day_seconds: dict[str, float] = defaultdict(float)
-    day_source_book_ids: dict[str, set[str]] = defaultdict(set)
-    month_seconds: dict[str, float] = defaultdict(float)
-    books: dict[str, dict[str, Any]] = {}
-    session_events: list[dict[str, Any]] = []
-    total_seconds = 0.0
+        day_seconds: dict[str, float] = defaultdict(float)
+        day_source_book_ids: dict[str, set[str]] = defaultdict(set)
+        month_seconds: dict[str, float] = defaultdict(float)
+        books: dict[str, dict[str, Any]] = {}
+        session_events: list[dict[str, Any]] = []
+        total_seconds = 0.0
 
-    for row in rows:
-        try:
-            duration = float(row["duration"] or 0)
-        except (TypeError, ValueError, OverflowError):
-            continue
-        if duration <= 0 or not math.isfinite(duration):
-            continue
+        for row in rows:
+            try:
+                duration = float(row["duration"] or 0)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if duration <= 0 or not math.isfinite(duration):
+                continue
 
-        started = local_dt(row["started_at"], zone)
-        if started is None:
-            continue
-        try:
-            ended = started + timedelta(seconds=duration)
-        except OverflowError:
-            continue
+            started = local_dt(row["started_at"], zone)
+            if started is None:
+                continue
+            try:
+                ended = started + timedelta(seconds=duration)
+            except OverflowError:
+                continue
 
-        book_id = str(row["book_id"])
-        reading_date = started.date().isoformat()
-        total_seconds += duration
-        day_seconds[reading_date] += duration
-        day_source_book_ids[reading_date].add(book_id)
-        month_seconds[month_key(started)] += duration
-        session_events.append(
-            {
-                "book_id": book_id,
-                "started_at": started,
-                "ended_at": ended,
-                "duration": duration,
-                "interval": page_interval(row["page"], row["event_total_pages"] if total_pages_col else row["book_pages"]),
-            }
-        )
+            book_id = str(row["book_id"])
+            reading_date = started.date().isoformat()
+            total_seconds += duration
+            day_seconds[reading_date] += duration
+            day_source_book_ids[reading_date].add(book_id)
+            month_seconds[month_key(started)] += duration
+            session_events.append(
+                {
+                    "book_id": book_id,
+                    "started_at": started,
+                    "ended_at": ended,
+                    "duration": duration,
+                    "interval": page_interval(row["page"], row["event_total_pages"] if total_pages_col else row["book_pages"]),
+                }
+            )
 
-        book = books.setdefault(
-            book_id,
-            {
-                "id": book_id,
-                "title": display_text(row["title"], "Untitled"),
-                "authors": display_text(row["authors"], "Unknown author"),
-                "title_key": real_book_identity_key(row["title"]),
-                "authors_key": real_book_identity_key(row["authors"]),
-                "md5": display_text(row["md5"], ""),
-                "series_key": optional_metadata_key(row["series"]),
-                "language_key": language_identity_key(row["language"]),
-                "series": display_text(row["series"], ""),
-                "language": display_text(row["language"], ""),
-                "last_open_timestamp": 0.0,
-                "time_seconds": 0.0,
-                "day_seconds": defaultdict(float),
-                "coverage_intervals": [], "position_timestamp": 0.0,
-                "max_page": None,
-                "total_pages": None,
-                "sidecar": None,
-            },
-        )
-        if book["sidecar"] is None and book["md5"]:
-            book["sidecar"] = sidecars_by_md5.get(book["md5"])
-        book["time_seconds"] += duration
-        book["day_seconds"][reading_date] += duration
+            book = books.setdefault(
+                book_id,
+                {
+                    "id": book_id,
+                    "title": display_text(row["title"], "Untitled"),
+                    "authors": display_text(row["authors"], "Unknown author"),
+                    "title_key": real_book_identity_key(row["title"]),
+                    "authors_key": real_book_identity_key(row["authors"]),
+                    "md5": display_text(row["md5"], ""),
+                    "series_key": optional_metadata_key(row["series"]),
+                    "language_key": language_identity_key(row["language"]),
+                    "series": display_text(row["series"], ""),
+                    "language": display_text(row["language"], ""),
+                    "last_open_timestamp": 0.0,
+                    "time_seconds": 0.0,
+                    "day_seconds": defaultdict(float),
+                    "coverage_intervals": [], "position_timestamp": 0.0,
+                    "max_page": None,
+                    "total_pages": None,
+                    "sidecar": None,
+                },
+            )
+            if book["sidecar"] is None and book["md5"]:
+                book["sidecar"] = sidecars_by_md5.get(book["md5"])
+            book["time_seconds"] += duration
+            book["day_seconds"][reading_date] += duration
 
-        opened = max(local_dt(row["last_open"], zone) or started, started)
-        opened_ts = opened.timestamp()
-        if opened_ts > book["last_open_timestamp"]:
-            book["last_open_timestamp"] = opened_ts
+            opened = max(local_dt(row["last_open"], zone) or started, started)
+            opened_ts = opened.timestamp()
+            if opened_ts > book["last_open_timestamp"]:
+                book["last_open_timestamp"] = opened_ts
 
-        interval = session_events[-1]["interval"]
-        if interval is not None:
-            book["coverage_intervals"].append(interval)
-            if started.timestamp() >= book["position_timestamp"]:
-                book["position_timestamp"] = started.timestamp()
-                book["position_fraction"] = interval[1]
-                book["total_pages"] = int(row["book_pages"] if page_interval(1, row["book_pages"]) else row["event_total_pages"])
-                book["max_page"] = min(book["total_pages"], max(1, round(interval[1] * book["total_pages"])))
+            interval = session_events[-1]["interval"]
+            if interval is not None:
+                book["coverage_intervals"].append(interval)
+                if started.timestamp() >= book["position_timestamp"]:
+                    book["position_timestamp"] = started.timestamp()
+                    book["position_fraction"] = interval[1]
+                    book["total_pages"] = int(row["book_pages"] if page_interval(1, row["book_pages"]) else row["event_total_pages"])
+                    book["max_page"] = min(book["total_pages"], max(1, round(interval[1] * book["total_pages"])))
 
     # Include database-only books and metadata-only books without inventing events.
     def seed_book(book_id: str, title: Any, authors: Any, md5: Any, series: Any, language: Any, sidecar=None):
