@@ -1747,9 +1747,9 @@ describe("App", () => {
     await userEvent.click(await screen.findByRole("link", { name: /Books/i }));
     expect(screen.getAllByText("Books").length).toBeGreaterThan(1);
     const booksTableRegion = screen.getByRole("region", { name: "Books table" });
-    expect(booksTableRegion).not.toHaveAttribute("style");
+    expect(booksTableRegion.style.maxHeight).not.toBe("");
     expect(booksTableRegion).toHaveClass("overflow-x-auto");
-    expect(booksTableRegion).not.toHaveClass("overflow-y-auto");
+    expect(booksTableRegion).toHaveClass("overflow-y-auto");
     expect(booksTableRegion).toHaveAttribute("tabindex", "0");
     expect(screen.getByText("3 of 3 books")).toBeInTheDocument();
     expect(screen.getByText(/3h 40m/)).toBeInTheDocument();
@@ -1838,59 +1838,71 @@ describe("App", () => {
     expect(within(rows[1]).getByText("Notes on a Small Planet")).toBeInTheDocument();
   });
 
-  it("keeps the horizontal scrollbar at the natural bottom of the recent-books table", async () => {
+  it("sizes book table viewports to the page and dashboard card, with fixed headers and pinned details", async () => {
     mockFetch((url) => {
-      if (url.startsWith("/api/device/status")) {
-        return {
-          mount_path: "/Volumes/KOBOeReader",
-          mounted: false,
-          database_found: false,
-          selected_path: null,
-          permission_error: null,
-          candidates: [],
-        };
-      }
+      if (url.startsWith("/api/device/status")) return { mounted: false, database_found: false, candidates: [] };
       if (url.startsWith("/api/snapshots")) return { snapshots: [populatedDashboard.snapshot] };
       return populatedDashboard;
     });
-    vi.spyOn(window, "innerHeight", "get").mockReturnValue(375);
-    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      bottom: 0,
-      height: 0,
-      left: 0,
-      right: 0,
-      top: 335,
-      width: 0,
-      x: 0,
-      y: 335,
-      toJSON: () => ({}),
+    let pageHeight = 700;
+    let dashboardCardTop = 2000;
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("page-content") ? pageHeight : 0;
     });
-
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const label = this.getAttribute("aria-label");
+      const top = label === "Page content" ? 60
+        : label === "Recent books table" ? dashboardCardTop + 60
+          : label === "Books table" ? 240
+            : this.querySelector('[aria-label="Recent books table"]') ? dashboardCardTop : 0;
+      return { top, bottom: top, left: 0, right: 0, width: 0, height: 0, x: 0, y: top, toJSON: () => ({}) };
+    });
+    const observers = new Set<() => void>();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(private callback: () => void) {}
+      observe(target: HTMLElement) {
+        if (target.classList.contains("page-content")) observers.add(this.callback);
+      }
+      unobserve() {}
+      disconnect() { observers.delete(this.callback); }
+    });
     render(<App />);
-
     await screen.findByRole("table");
-    const tableRegion = screen.getByRole("region", { name: "Recent books table" });
-    expect(tableRegion).not.toHaveStyle({ maxHeight: "322px" });
-
-    rectSpy.mockReturnValue({
-      bottom: 0,
-      height: 0,
-      left: 0,
-      right: 0,
-      top: 100,
-      width: 0,
-      x: 0,
-      y: 100,
-      toJSON: () => ({}),
-    });
-    act(() => window.dispatchEvent(new Event("scroll")));
-
-    expect(tableRegion).not.toHaveStyle({ maxHeight: "322px" });
-
-    vi.spyOn(window, "innerHeight", "get").mockReturnValue(200);
+    const recent = screen.getByRole("region", { name: "Recent books table" });
+    expect(recent).toHaveStyle({ maxHeight: "640px" });
+    const pageContent = screen.getByRole("region", { name: "Page content" }).firstElementChild as HTMLElement;
+    const recentCard = recent.closest('[data-slot="card"]') as HTMLElement;
+    pageContent.style.padding = "20px";
+    recentCard.style.paddingBottom = "16px";
+    act(() => observers.forEach((callback) => callback()));
+    expect(recent).toHaveStyle({ maxHeight: "584px" });
+    pageContent.style.padding = "";
+    recentCard.style.paddingBottom = "";
+    act(() => observers.forEach((callback) => callback()));
+    expect(recent).toHaveClass("overflow-y-auto");
+    expect(within(recent).getAllByRole("columnheader")[0]).toHaveClass("sticky", "top-0");
+    expect(screen.queryByLabelText("Recent books table horizontal scroll")).not.toBeInTheDocument();
+    dashboardCardTop = 100;
+    act(() => observers.forEach((callback) => callback()));
+    expect(recent).toHaveStyle({ maxHeight: "640px" });
+    pageHeight = 500;
+    act(() => observers.forEach((callback) => callback()));
+    expect(recent).toHaveStyle({ maxHeight: "440px" });
+    const details = within(recent).getAllByRole("button", { name: "Details" })[0];
+    expect(details.closest("td")).toHaveClass("sticky", "right-0");
+    await userEvent.click(details);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("link", { name: /Books/i }));
+    const books = screen.getByRole("region", { name: "Books table" });
+    expect(books).toHaveStyle({ maxHeight: "320px" });
+    expect(books).toHaveClass("overflow-y-auto");
+    pageHeight = 700;
     act(() => window.dispatchEvent(new Event("resize")));
-
-    expect(tableRegion).not.toHaveStyle({ maxHeight: "147px" });
+    expect(books).toHaveStyle({ maxHeight: "520px" });
+    expect(within(books).getAllByRole("columnheader")[0]).toHaveClass("sticky", "top-0");
+    expect(within(books).getAllByRole("button", { name: "Details" })[0].closest("td"))
+      .toHaveClass("sticky", "right-0");
   });
 
   it("preserves Books pagination across background refreshes and resets after filtering", async () => {
@@ -1946,10 +1958,12 @@ describe("App", () => {
     expect(tableRegion.nextElementSibling).toContainElement(screen.getByText("Page 1 of 2"));
     expect(screen.queryByText("Book 021")).not.toBeInTheDocument();
 
+    tableRegion.scrollTop = 300;
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(screen.getByText("Book 021")).toBeInTheDocument();
     expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
-    expect(tableRegion.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(tableRegion.closest('[data-slot="card"]')?.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    expect(tableRegion.scrollTop).toBe(0);
 
     await act(async () => {
       vi.advanceTimersByTime(15000);

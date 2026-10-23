@@ -348,7 +348,7 @@ function TableColumnPicker<TData>({ table }: { table: TanStackTable<TData> }) {
   );
 }
 
-function ResizableDataTable<TData>({ table, emptyMessage }: { table: TanStackTable<TData>; emptyMessage: string }) {
+function ResizableDataTable<TData>({ table, emptyMessage, bounded = false }: { table: TanStackTable<TData>; emptyMessage: string; bounded?: boolean }) {
   const rows = table.getRowModel().rows;
   function resizeWithKeyboard(event: ReactKeyboardEvent<HTMLDivElement>, column: Column<TData, unknown>) {
     const step = event.shiftKey ? 40 : 16;
@@ -378,7 +378,7 @@ function ResizableDataTable<TData>({ table, emptyMessage }: { table: TanStackTab
               <TableHead
                 key={header.id}
                 aria-sort={ariaSortValue(header.column.getIsSorted())}
-                className="relative"
+                className={cn("relative", bounded && "sticky top-0 z-20 bg-card", header.column.id === "details" && "sticky right-0 z-30 bg-card")}
                 style={{ width: header.getSize() }}
               >
                 {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
@@ -415,7 +415,11 @@ function ResizableDataTable<TData>({ table, emptyMessage }: { table: TanStackTab
           rows.map((row) => (
             <TableRow key={row.id}>
               {row.getVisibleCells().map((cell) => (
-                <TableCell key={cell.id} style={{ width: cell.column.getSize() }}>
+                <TableCell
+                  key={cell.id}
+                  className={cn(cell.column.id === "details" && "sticky right-0 z-10 bg-card border-l")}
+                  style={{ width: cell.column.getSize() }}
+                >
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </TableCell>
               ))}
@@ -431,22 +435,63 @@ function PaginatedTable<TData>({
   ariaLabel,
   table,
   emptyMessage,
+  viewport,
 }: {
   ariaLabel: string;
   table: TanStackTable<TData>;
   emptyMessage: string;
+  viewport?: "page" | "embedded";
 }) {
   const regionRef = useRef<HTMLDivElement>(null);
+  const footerRef = useRef<HTMLDivElement>(null);
+  const [viewportHeight, setViewportHeight] = useState<number>();
+
   const rowCount = table.getPrePaginationRowModel().rows.length;
   const { pageIndex, pageSize } = table.getState().pagination;
   const pageCount = table.getPageCount();
   const firstRow = rowCount === 0 ? 0 : pageIndex * pageSize + 1;
   const lastRow = Math.min((pageIndex + 1) * pageSize, rowCount);
 
+  useLayoutEffect(() => {
+    if (!viewport) return;
+    const region = regionRef.current;
+    const page = region?.closest<HTMLElement>(".page-content");
+    const card = region?.closest<HTMLElement>('[data-slot="card"]');
+    if (!region || !page || !card) return;
+    const content = page.firstElementChild;
+    function measure() {
+      if (!region || !page || !card) return;
+      const padding = content ? getComputedStyle(content) : null;
+      const topPadding = parseFloat(padding?.paddingTop ?? "0") || 0;
+      const bottomPadding = parseFloat(padding?.paddingBottom ?? "0") || 0;
+      // Embedded tables are sized as if their card were at the top of the page,
+      // independent of how far below the fold they currently sit.
+      const offset = viewport === "embedded"
+        ? topPadding + region.getBoundingClientRect().top - card.getBoundingClientRect().top
+        : region.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop;
+      const footerHeight = footerRef.current?.getBoundingClientRect().height ?? 0;
+      const cardBottomPadding = parseFloat(getComputedStyle(card).paddingBottom) || 0;
+      setViewportHeight(Math.max(120, page.clientHeight - offset - footerHeight - bottomPadding - cardBottomPadding));
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(page);
+    observer.observe(card);
+    if (footerRef.current) observer.observe(footerRef.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [viewport, pageCount > 1]);
+
   function changePage(direction: "previous" | "next") {
     if (direction === "previous") table.previousPage();
     else table.nextPage();
-    regionRef.current?.scrollIntoView({ block: "start" });
+    const region = regionRef.current;
+    if (region) region.scrollTop = 0;
+    if (viewport) region?.closest('[data-slot="card"]')?.scrollIntoView({ block: "nearest" });
+    else region?.scrollIntoView({ block: "start" });
   }
 
   return (
@@ -454,17 +499,19 @@ function PaginatedTable<TData>({
       <div
         aria-label={ariaLabel}
         className={cn(
-          "min-w-0 overflow-x-auto overscroll-x-contain [scrollbar-gutter:stable] [&_[data-slot=table-container]]:min-w-0 [&_[data-slot=table-container]]:!overflow-visible",
+          "min-w-0 overflow-x-auto overscroll-x-contain [&_[data-slot=table-container]]:min-w-0 [&_[data-slot=table-container]]:!overflow-visible",
+          viewport && "table-viewport overflow-y-auto",
           pageCount <= 1 && "rounded-b-xl",
         )}
+        style={viewport ? { maxHeight: viewportHeight } : undefined}
         ref={regionRef}
         role="region"
         tabIndex={0}
       >
-        <ResizableDataTable table={table} emptyMessage={emptyMessage} />
+        <ResizableDataTable table={table} emptyMessage={emptyMessage} bounded={!!viewport} />
       </div>
       {pageCount > 1 ? (
-        <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div ref={footerRef} className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <p className="text-sm text-muted-foreground">
             {firstRow.toLocaleString()}–{lastRow.toLocaleString()} of {rowCount.toLocaleString()}
           </p>
@@ -1654,7 +1701,7 @@ function RecentBooks({ books, onSelectBook }: { books: Dashboard["recent_books"]
         <CardAction className="w-32"><TableColumnPicker table={table} /></CardAction>
       </CardHeader>
       <CardContent className="px-0 pb-0">
-        <PaginatedTable ariaLabel="Recent books table" table={table} emptyMessage="No books yet." />
+        <PaginatedTable viewport="embedded" ariaLabel="Recent books table" table={table} emptyMessage="No books yet." />
       </CardContent>
     </Card>
   );
@@ -2027,7 +2074,7 @@ function BooksView({
         </FieldGroup>
       </CardContent>
       <CardContent className="px-0 pb-0">
-        <PaginatedTable ariaLabel="Books table" table={table} emptyMessage="No books match the current filters." />
+        <PaginatedTable viewport="page" ariaLabel="Books table" table={table} emptyMessage="No books match the current filters." />
       </CardContent>
     </Card>
     <BookDetailDialog book={selectedBook} onOpenChange={(open) => !open && setSelectedBook(null)} />

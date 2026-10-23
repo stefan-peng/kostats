@@ -375,3 +375,24 @@
   background: var(--panel);
   box-shadow: 0 0 0 1px var(--border), var(--panel-shadow);
 }
+
+.table-viewport {
+  scrollbar-color: var(--muted-foreground) var(--muted);
+  scrollbar-gutter: stable;
+}
+
+.table-viewport::-webkit-scrollbar {
+  width: 1rem;
+  height: 1rem;
+}
+
+.table-viewport::-webkit-scrollbar-track,
+.table-viewport::-webkit-scrollbar-corner {
+  background: var(--muted);
+}
+
+.table-viewport::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  border: 3px solid var(--muted);
+  border-radius: 1rem;
+}
